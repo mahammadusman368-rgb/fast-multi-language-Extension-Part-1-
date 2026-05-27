@@ -1,6 +1,6 @@
 -- Extension Name: Fast Multi Language Typing
 -- Creator: Mohammad Usman
--- Version: 2.0 (Final & Stable)
+-- Version: 2.0
 
 require "import"
 import "android.content.Intent"
@@ -15,19 +15,17 @@ import "android.content.Context"
 import "android.media.RingtoneManager"
 import "java.util.Locale"
 import "java.net.URL"
-import "java.io.BufferedReader"
-import "java.io.InputStreamReader"
 
 -- 1. Initial Variables & Update Configuration
 currentVersion = "2.0"
-selectedLangCode = selectedLangCode or "en-US"
-selectedLangName = selectedLangName or "English (US)"
+selectedLangCode = "en-US"
+selectedLangName = "English (US)"
 
--- GitHub Raw Links for Auto Update System
+-- GitHub Raw Links
 local VERSION_URL = "https://raw.githubusercontent.com/mahammadusman368-rgb/fast-multi-language-Extension-Part-1-/main/virgin%20file%20extension"
 local SCRIPT_URL = "https://raw.githubusercontent.com/mahammadusman368-rgb/fast-multi-language-Extension-Part-1-/main/main%20luwa%20edit%20box%20"
 
--- 2. UNIVERSAL FOCUS FINDER (Stable for all Androids)
+-- 2. UNIVERSAL FOCUS FINDER
 local function getUniversalFocus()
   local root = service.getRootInActiveWindow()
   if not root then return service.getEditText() end
@@ -38,38 +36,36 @@ local function getUniversalFocus()
   return service.getEditText()
 end
 
--- 3. SMART MOOD-BASED EMOJI LOGIC (Enhanced)
+-- 3. SMART MOOD-BASED EMOJI LOGIC
 local function applySmartEmoji(text)
   if service.getSharedData("emoji_on") ~= "true" then return text end
   local t = text:lower()
   local emoji = ""
   
-  if t:find("hah") or t:find("funny") or t:find("mazak") or t:find("hansi") or t:find("joke") or t:find("lmfao") then
-    emoji = " 😂🤣😆"
-  elseif t:find("sad") or t:find("rona") or t:find("dukh") or t:find("sorry") or t:find("gham") or t:find("afsos") then
-    emoji = " 🥺😭💔"
-  elseif t:find("love") or t:find("pyar") or t:find("ishq") or t:find("dil") or t:find("jan") or t:find("heart") then
-    emoji = " ❤️😘🥰"
-  elseif t:find("gussa") or t:find("angry") or t:find("pagal") or t:find("bad") or t:find("fight") then
-    emoji = " 😡🔥👿"
-  elseif t:find("hi") or t:find("hello") or t:find("salam") or t:find("hey") or t:find("kaise") or t:find("welcome") then
-    emoji = " 👋😊🌟"
-  elseif t:find("shukriya") or t:find("thanks") or t:find("meherbani") or t:find("jazakallah") or t:find("thank you") then
-    emoji = " 🙏😇✨"
-  elseif t:find("khana") or t:find("food") or t:find("bhuk") or t:find("chai") or t:find("nashta") or t:find("biryani") then
-    emoji = " 🍲😋☕"
-  elseif t:find("nind") or t:find("sleep") or t:find("night") or t:find("so gaya") or t:find("dream") then
-    emoji = " 😴💤🌙"
-  elseif t:find("ok") or t:find("theek") or t:find("done") or t:find("ji") or t:find("yes") or t:find("good") then
-    emoji = " 👍✅👌"
-  elseif t:find("allah") or t:find("dua") or t:find("ameen") or t:find("mashallah") or t:find("subhanallah") then
-    emoji = " 🤲🕌✨"
-  elseif t:find("paisa") or t:find("money") or t:find("cash") or t:find("rich") then
-    emoji = " 💵💰🤑"
-  elseif t:find("gari") or t:find("car") or t:find("bike") or t:find("travel") or t:find("safari") then
-    emoji = " 🚗🏍️✈️"
-  elseif t:find("cricket") or t:find("match") or t:find("game") or t:find("play") or t:find("win") then
-    emoji = " 🏏🏆🎮"
+  if t:find("hah") or t:find("funny") or t:find("mazak") or t:find("hansi") or t:find("joke") then
+    emoji = " 😂"
+  elseif t:find("sad") or t:find("rona") or t:find("dukh") or t:find("sorry") then
+    emoji = " 🥺"
+  elseif t:find("love") or t:find("pyar") or t:find("dil") or t:find("heart") then
+    emoji = " ❤️"
+  elseif t:find("gussa") or t:find("angry") or t:find("pagal") then
+    emoji = " 😡"
+  elseif t:find("hi") or t:find("hello") or t:find("salam") or t:find("hey") then
+    emoji = " 👋"
+  elseif t:find("shukriya") or t:find("thanks") or t:find("thank you") then
+    emoji = " 🙏"
+  elseif t:find("khana") or t:find("food") or t:find("chai") or t:find("biryani") then
+    emoji = " 🍲"
+  elseif t:find("nind") or t:find("sleep") or t:find("night") or t:find("so gaya") then
+    emoji = " 😴"
+  elseif t:find("ok") or t:find("theek") or t:find("done") or t:find("yes") then
+    emoji = " 👍"
+  elseif t:find("allah") or t:find("dua") or t:find("ameen") or t:find("mashallah") then
+    emoji = " 🤲"
+  elseif t:find("paisa") or t:find("money") or t:find("cash") then
+    emoji = " 💵"
+  elseif t:find("cricket") or t:find("match") or t:find("game") then
+    emoji = " 🏏"
   else
     emoji = " ✨"
   end
@@ -88,112 +84,93 @@ local function playNotificationTone()
   end
 end
 
--- 5. AUTO UPDATE SYSTEM FUNCTION
+-- 5. CRASH-FREE AUTO UPDATE SYSTEM (Fixed 'cannot find http' Error)
 local function checkUpdate(isManual)
-  thread(function()
-    pcall(function()
-      local url = URL(VERSION_URL)
-      local conn = url.openConnection()
-      conn.setConnectTimeout(5000)
-      local reader = BufferedReader(InputStreamReader(conn.getInputStream()))
-      local latestVersion = reader.readLine()
-      reader.close()
-      
-      if latestVersion then
+  -- Jieshuo ke standard internal network utility se data read karne ka stable tareqa
+  pcall(function()
+    import "com.androlua.Http"
+    Http.get(VERSION_URL, nil, "UTF-8", nil, function(code, latestVersion)
+      if code == 200 and latestVersion then
         latestVersion = latestVersion:gsub("%s+", "")
+        
         if latestVersion ~= currentVersion then
-          -- Naya version mil gaya
-          service.asyncSpeak("Naya update maujood hai")
-          
-          -- Main code download karna
-          local scriptUrl = URL(SCRIPT_URL)
-          local scriptConn = scriptUrl.openConnection()
-          scriptConn.setConnectTimeout(5000)
-          local scriptReader = BufferedReader(InputStreamReader(scriptConn.getInputStream()))
-          local line = scriptReader.readLine()
-          local fullCode = ""
-          while line do
-            fullCode = fullCode .. line .. "\n"
-            line = scriptReader.readLine()
+          if isManual then
+            service.speak("Naya update maujood hai, download shuru ho raha hai")
           end
-          scriptReader.close()
           
-          if fullCode ~= "" then
-            -- Extension file ko override (update) karna
-            local file = service.getExtensionPath().."/"..service.getSelf().getName().."/main.lua"
-            io.output(file)
-            io.write(fullCode)
-            io.close()
-            service.asyncSpeak("Extension kamyabi se update ho gaya hai")
-          end
+          Http.get(SCRIPT_URL, nil, "UTF-8", nil, function(scriptCode, fullCode)
+            if scriptCode == 200 and fullCode and fullCode ~= "" then
+              local file = service.getExtensionPath().."/"..service.getSelf().getName().."/main.lua"
+              local f = io.open(file, "w")
+              if f then
+                f:write(fullCode)
+                f:close()
+                service.speak("Extension kamyabi se update ho gaya hai. Dobara chalayein.")
+              end
+            else
+              if isManual then service.speak("Code download nahi ho saka") end
+            end
+          end)
         else
           if isManual then
-            service.asyncSpeak("Aap pehle hi latest version istemal kar rahe hain")
+            service.speak("Aap pehle hi latest version istemal kar rahe hain")
           end
         end
+      else
+        if isManual then service.speak("Server se rabta nahi ho saka") end
       end
     end)
   end)
 end
 
--- 6. VOICE RECOGNITION ENGINE (Protected against Screen Lock)
+-- 6. VOICE RECOGNITION ENGINE
 function startVoiceTyping(targetBox)
-  pcall(function()
-    if service.getSharedData("vibrate_on") == "true" then
-      local vib = service.getContext().getSystemService(Context.VIBRATOR_SERVICE)
-      if vib then vib.vibrate(60) end
-    end
-    
-    playNotificationTone()
+  if service.getSharedData("vibrate_on") == "true" then
+    local vib = service.getContext().getSystemService(Context.VIBRATOR_SERVICE)
+    if vib then vib.vibrate(60) end
+  end
+  
+  playNotificationTone()
 
-    local speechRec = SpeechRecognizer.createSpeechRecognizer(service.getContext())
-    local listener = RecognitionListener {
-      onResults = function(results)
-        local resultsArray = results.getParcelableArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-        if resultsArray and resultsArray.size() > 0 then
-          local spokenText = tostring(resultsArray.get(0))
-          local finalText = applySmartEmoji(spokenText)
-          
-          -- Screen Lock Protection Logic
-          local currentTarget = getUniversalFocus() or targetBox
-          if currentTarget then
-            service.insertText(currentTarget, finalText .. " ")
-          end
-          service.speak(spokenText)
+  local speechRec = SpeechRecognizer.createSpeechRecognizer(service.getContext())
+  local listener = RecognitionListener {
+    onResults = function(results)
+      local resultsArray = results.getParcelableArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+      if resultsArray and resultsArray.size() > 0 then
+        local spokenText = tostring(resultsArray.get(0))
+        local finalText = applySmartEmoji(spokenText)
+        
+        local currentTarget = getUniversalFocus() or targetBox
+        if currentTarget then
+          service.insertText(currentTarget, finalText .. " ")
         end
-        speechRec.destroy()
-        collectgarbage("collect")
-      end,
-      onError = function()
-        service.asyncSpeak("Nahi samjha, dobara bole")
-        speechRec.destroy()
-      end,
-    }
-    
-    local intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-    intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-    intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, selectedLangCode)
-    intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-    
-    speechRec.setRecognitionListener(listener)
-    speechRec.startListening(intent)
-  end)
+        service.speak(spokenText)
+      end
+      speechRec.destroy()
+    end,
+    onError = function()
+      service.speak("Nahi samjha, dobara bole")
+      speechRec.destroy()
+    end,
+  }
+  
+  local intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+  intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+  intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, selectedLangCode)
+  intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+  
+  speechRec.setRecognitionListener(listener)
+  speechRec.startListening(intent)
 end
 
 -- 7. FULL SETTINGS MENU
 function showSettingsMenu()
   local languages = {
-    "English (US)", "English (UK)", "English (Pakistan)", "English (Australia)",
-    "Urdu (Pakistan)", "Punjabi (Pakistan)", "Sindhi (Pakistan)", "Pashto (Pakistan)", "Balochi (Pakistan)",
-    "Urdu (India)", "Hindi (India)", "Bengali (India)", "Punjabi (India)", "Gujarati (India)", "Marathi (India)", "Tamil (India)", "Telugu (India)",
-    "Bengali (Bangladesh)", "Arabic"
+    "English (US)", "English (UK)", "Urdu (Pakistan)", "Hindi (India)", "Arabic"
   }
   
   local codes = {
-    "en-US", "en-GB", "en-PK", "en-AU",
-    "ur-PK", "pa-PK", "sd-PK", "ps-PK", "bal-PK",
-    "ur-IN", "hi-IN", "bn-IN", "pa-IN", "gu-IN", "mr-IN", "ta-IN", "te-IN",
-    "bn-BD", "ar-SA"
+    "en-US", "en-GB", "ur-PK", "hi-IN", "ar-SA"
   }
 
   local mainOptions = {
@@ -247,15 +224,10 @@ function showSettingsMenu()
   d.show()
 end
 
--- 8. EXECUTION
-pcall(function()
-  -- Background mein silently update check karega jab bhi extension run hoga
-  checkUpdate(false)
-  
-  local target = getUniversalFocus()
-  if target then
-    startVoiceTyping(target)
-  else
-    showSettingsMenu()
-  end
-end)
+-- 8. MAIN EXECUTION TRIGGER
+local target = getUniversalFocus()
+if target then
+  startVoiceTyping(target)
+else
+  showSettingsMenu()
+end
