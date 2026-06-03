@@ -1,0 +1,954 @@
+require "import"
+import "android.widget.*"
+import "android.view.*"
+import "android.content.*"
+import "android.os.Handler"
+import "java.lang.Runnable"
+import "java.io.File"
+import "android.text.Editable"
+import "android.text.TextWatcher"
+import "android.graphics.Typeface"
+import "android.graphics.drawable.GradientDrawable"
+import "android.graphics.Color"
+
+-- Creator: Mohammed Usman
+local creator_name = "Mohammed Usman"
+local app_title = "Data Saver Extension Pro - Creator: Mohammed Usman"
+
+-- Helper function to style TextViews to look and feel like clean buttons
+local function style_as_button(view, bg_color)
+  local gd = GradientDrawable()
+  gd.setColor(Color.parseColor(bg_color or "#2196F3"))
+  gd.setCornerRadius(12)
+  view.setBackgroundDrawable(gd)
+  view.setPadding(30, 25, 30, 25)
+  view.setGravity(Gravity.CENTER)
+  view.setTextColor(Color.parseColor("#FFFFFF"))
+  view.setTextSize(16)
+  view.setFocusable(true)
+  view.setClickable(true)
+  
+  local lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.FILL_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+  lp.setMargins(15, 12, 15, 12)
+  view.setLayoutParams(lp)
+end
+
+-- ========== Optimized Save/Load System ==========
+local function dump_value(val)
+  if type(val) == "table" then
+    local res = {"{\n"}
+    for k, v in pairs(val) do
+      if type(k) == "string" then
+        table.insert(res, string.format("[%q]=%s,\n", k, dump_value(v)))
+      else
+        table.insert(res, string.format("[%d]=%s,\n", k, dump_value(v)))
+      end
+    end
+    table.insert(res, "}")
+    return table.concat(res)
+  elseif type(val) == "string" then 
+    return string.format("%q", val)
+  else 
+    return tostring(val) 
+  end
+end
+
+local function save_data(data)
+  local path = service.getFilesDir().toString().."/Data_Saver_Extension_Pro_Internal.dat"
+  local f = io.open(path, "w")
+  if f then
+    f:write("return " .. dump_value(data))
+    f:close()
+    return true
+  end
+  return false
+end
+
+local function load_data()
+  local path = service.getFilesDir().toString().."/Data_Saver_Extension_Pro_Internal.dat"
+  local f = io.open(path, "r")
+  if f then
+    local content = f:read("*a")
+    f:close()
+    local chunk = load(content)
+    if chunk then
+      local ok, data = pcall(chunk)
+      if ok and type(data) == "table" then return data end
+    end
+  end
+  return {}
+end
+
+local function check_duplicate_text(new_text)
+  local current_data = load_data()
+  for _, item in ipairs(current_data) do
+    if item.script == new_text then
+      return item.name
+    end
+  end
+  return nil
+end
+
+local function get_custom_date()
+  local months = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"}
+  local day = os.date("%d")
+  local month_idx = tonumber(os.date("%m"))
+  local year = os.date("%Y")
+  return day .. " " .. months[month_idx] .. " " .. year
+end
+
+-- Main Layout Setup
+local layout = {
+  LinearLayout,
+  orientation = "vertical",
+  layout_width = "fill",
+  backgroundColor = "#ffffff",
+  {
+    TextView,
+    text = app_title,
+    id = "main_title_tv",
+    layout_width = "fill",
+    gravity = "center",
+    textSize = "16sp",
+    padding = "12dp",
+    textColor = "#2196F3",
+  },
+  {TextView, text="Add Data Button", id="add_btn"},
+  {TextView, text="Import File Button", id="import_btn"},
+  {TextView, text="Data List Button", id="view_btn"},
+  {TextView, text="Share Extension Only (Data Safe)", id="clean_share_btn"},
+  {TextView, text="Backup & Restore Button", id="backup_btn"},
+  {TextView, text="Close Button", id="exit_main"},
+}
+
+local main_view = loadlayout(layout)
+main_view.findViewById(main_title_tv.id).setTypeface(Typeface.DEFAULT_BOLD)
+
+style_as_button(main_view.findViewById(add_btn.id), "#2196F3")
+style_as_button(main_view.findViewById(import_btn.id), "#2196F3")
+style_as_button(main_view.findViewById(view_btn.id), "#2196F3")
+style_as_button(main_view.findViewById(clean_share_btn.id), "#009688")
+style_as_button(main_view.findViewById(backup_btn.id), "#2196F3")
+style_as_button(main_view.findViewById(exit_main.id), "#F44336")
+
+local main_dlg = LuaDialog(service).setView(main_view)
+local last_selected_item_index = 0
+
+local function show_safe_alert(title_text, message_text)
+  local alert_layout = {
+    LinearLayout, orientation="vertical", padding="15dp", layout_width="fill",
+    {TextView, id="alert_title", text=title_text, textSize="16sp", textColor="#2196F3", paddingBottom="10dp"},
+    {TextView, text=message_text, textSize="14sp", paddingBottom="15dp"},
+    {TextView, text="OK", id="alert_ok_btn"}
+  }
+  local alert_view = loadlayout(alert_layout)
+  alert_view.findViewById(alert_title.id).setTypeface(Typeface.DEFAULT_BOLD)
+  style_as_button(alert_view.findViewById(alert_ok_btn.id), "#2196F3")
+  
+  local alert_dlg = LuaDialog(service).setView(alert_view)
+  alert_ok_btn.onClick = function() alert_dlg.dismiss() end
+  alert_dlg.show()
+end
+
+-- Section 1: Manual Add / Edit
+local function open_add_edit_dialog(edit_index, existing_item, on_close_callback)
+  local is_edit = (edit_index ~= nil)
+  local categories = {"Lua Script", "Text Note", "Important Key", "Other"}
+  
+  local al = {
+    LinearLayout, orientation="vertical", layout_height="fill", layout_width="fill",
+    {ScrollView, layout_weight=1, {LinearLayout, orientation="vertical", padding="15dp",
+        {TextView, text="Select Category:"},
+        {Spinner, id="cat_spinner", layout_width="fill", layout_marginBottom="10dp"},
+        {TextView, text="Yahan Naam Likhein:"},
+        {EditText, id="t", layout_width="fill", text = is_edit and existing_item.name or ""},
+        {TextView, text="Yahan Data Paste Karen Ya Data Add Karen:"},
+        {EditText, id="c", layout_width="fill", minLines=10, gravity="top", text = is_edit and existing_item.script or ""}}},
+    {LinearLayout, orientation="vertical", padding="10dp",
+      {TextView, text=is_edit and "Update Data Button" or "Save Data Button", id="s"},
+      {TextView, text="Back Button", id="b"}}}
+  
+  local add_view = loadlayout(al)
+  style_as_button(add_view.findViewById(s.id), "#2196F3")
+  style_as_button(add_view.findViewById(b.id), "#9E9E9E")
+  
+  local ad = LuaDialog(service).setView(add_view)
+  local spin_adapter = ArrayAdapter(service, android.R.layout.simple_spinner_item, categories)
+  spin_adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+  cat_spinner.setAdapter(spin_adapter)
+  if is_edit and existing_item.category then
+    for idx, cat in ipairs(categories) do
+      if cat == existing_item.category then cat_spinner.setSelection(idx-1) break end
+    end
+  end
+
+  s.onClick = function()
+    local title = t.getText().toString()
+    local content = c.getText().toString()
+    local selected_cat = categories[cat_spinner.getSelectedItemPosition() + 1]
+    
+    if title == "" or content == "" then
+      service.speak("Naam aur Data likhna lazmi hai")
+      return
+    end
+
+    if not is_edit or (is_edit and content ~= existing_item.script) then
+      local existing_name = check_duplicate_text(content)
+      if existing_name then
+        service.speak("Yeh data pehle hi save hai")
+        ad.dismiss()
+        show_safe_alert("Warning!", "Yeh data pehle se '"..existing_name.."' ke naam se maujood hai.")
+        return
+      end
+    end
+
+    local d = load_data()
+    if is_edit then
+      d[edit_index] = {name = title, script = content, category = selected_cat, date = existing_item.date or get_custom_date(), is_fav = existing_item.is_fav or false}
+      service.speak("Data update ho gaya")
+    else
+      table.insert(d, {name = title, script = content, category = selected_cat, date = get_custom_date(), is_fav = false})
+      service.speak("Data save ho gaya")
+    end
+    
+    save_data(d)
+    ad.dismiss()
+    if on_close_callback then on_close_callback() end
+  end
+  b.onClick = function() ad.dismiss() if on_close_callback then on_close_callback() end end
+  ad.show()
+end
+
+add_btn.onClick = function() open_add_edit_dialog(nil, nil, nil) end
+
+-- Section 2: Storage Import
+import_btn.onClick = function()
+  local function show_browser(path)
+    local files = {}
+    local list = File(path).listFiles()
+    if list then for i = 0, #list - 1 do table.insert(files, list[i].getName()) end end
+    local b_layout = {
+      LinearLayout, orientation="vertical", layout_width="fill",
+      {TextView, text="Folder: "..path, padding="10dp"},
+      {ListView, id="flv", layout_width="fill", layout_weight=1},
+      {LinearLayout, layout_width="fill",
+        {TextView, text="Select File Button", id="done_btn"},
+        {TextView, text="Back Button", id="back_btn"}}}
+    
+    local browser_view = loadlayout(b_layout)
+    style_as_button(browser_view.findViewById(done_btn.id), "#2196F3")
+    style_as_button(browser_view.findViewById(back_btn.id), "#9E9E9E")
+    
+    local b_dlg = LuaDialog(service).setView(browser_view)
+    flv.setAdapter(ArrayAdapter(service, android.R.layout.simple_list_item_1, files))
+    local sel_path = nil
+    flv.onItemClick = function(l,v,p,i)
+      local np = path.."/"..files[i+1]
+      if File(np).isDirectory() then b_dlg.dismiss() show_browser(np)
+      else sel_path = np service.speak("File select ho gayi") end
+    end
+    done_btn.onClick = function()
+      if not sel_path then return end
+      b_dlg.dismiss()
+      local f = io.open(sel_path, "r")
+      if f then
+        local content = f:read("*a") f:close()
+        local existing_name = check_duplicate_text(content)
+        if existing_name then
+          service.speak("Duplicate file hai")
+          show_safe_alert("Duplicate!", "Is file ka data pehle se '"..existing_name.."' ke naam se save hai.")
+          return
+        end
+
+        local edit_l = {
+          LinearLayout, orientation="vertical", padding="15dp",
+          {TextView, text="Yahan Naam Likhein:"},
+          {EditText, id="en", text=File(sel_path).getName(), layout_width="fill"},
+          {TextView, text="Save Data Button", id="save_imported"}}
+        
+        local edit_view = loadlayout(edit_l)
+        style_as_button(edit_view.findViewById(save_imported.id), "#2196F3")
+        local e_dlg = LuaDialog(service).setView(edit_view)
+        save_imported.onClick = function()
+          local d = load_data()
+          table.insert(d, {name=en.getText().toString(), script=content, category="Other", date=get_custom_date(), is_fav=false})
+          save_data(d) service.speak("Save ho gaya") e_dlg.dismiss()
+        end
+        e_dlg.show()
+      end
+    end
+    back_btn.onClick = function() b_dlg.dismiss() end
+    b_dlg.show()
+  end
+  show_browser("/sdcard")
+end
+
+-- Section 3: List View Portal
+local function open_list_view_portal()
+  local all_data = load_data()
+  if #all_data == 0 then service.speak("List khali hai") return end
+  
+  local display_indices = {}
+  for idx, item in ipairs(all_data) do table.insert(display_indices, {original_index = idx, data = item}) end
+  table.sort(display_indices, function(a, b)
+    if a.data.is_fav and not b.data.is_fav then return true end
+    if not a.data.is_fav and b.data.is_fav then return false end
+    return a.original_index < b.original_index
+  end)
+
+  local l_layout = {
+    LinearLayout, orientation="vertical", layout_width="fill", padding="5dp",
+    {EditText, id="search_bar", hint="Search Button", layout_width="fill", layout_margin="5dp"},
+    {LinearLayout, layout_width="fill", orientation="horizontal",
+      {TextView, text="Delete Button", id="multi_del_btn"},
+      {TextView, text="Refresh Button", id="refresh_list_btn"}},
+    {ListView, id="lv", layout_width="fill", layout_weight=1},
+    {TextView, text="Back Button", id="lb"}}
+  
+  local l_view = loadlayout(l_layout)
+  style_as_button(l_view.findViewById(multi_del_btn.id), "#E91E63")
+  style_as_button(l_view.findViewById(refresh_list_btn.id), "#4CAF50")
+  style_as_button(l_view.findViewById(lb.id), "#9E9E9E")
+  local l_dlg = LuaDialog(service).setView(l_view)
+  
+  local function render_list(filter_text)
+    local filtered_display = {}
+    local display_strings = {}
+    for _, wrapper in ipairs(display_indices) do
+      local item = wrapper.data
+      local matches_search = true
+      if filter_text and filter_text ~= "" then
+        matches_search = string.find(string.lower(item.name), string.lower(filter_text)) or string.find(string.lower(item.category or ""), string.lower(filter_text))
+      end
+      if matches_search then
+        table.insert(filtered_display, wrapper)
+        local star_prefix = item.is_fav and "⭐ " or ""
+        local date_tag = item.date and (" (" .. item.date .. ")") or ""
+        table.insert(display_strings, star_prefix .. item.name .. date_tag)
+      end
+    end
+    lv.setAdapter(ArrayAdapter(service, android.R.layout.simple_list_item_1, display_strings))
+    return filtered_display
+  end
+
+  local active_filtered_list = render_list("")
+  if last_selected_item_index < #active_filtered_list then lv.setSelection(last_selected_item_index) end
+
+  search_bar.addTextChangedListener(TextWatcher{
+    onTextChanged=function(s, start, before, count) active_filtered_list = render_list(tostring(s)) end
+  })
+
+  refresh_list_btn.onClick = function() l_dlg.dismiss() open_list_view_portal() end
+
+  multi_del_btn.onClick = function()
+    if #active_filtered_list == 0 then return end
+    local checked_items = {}
+    local items_text = {}
+    for i, wrapper in ipairs(active_filtered_list) do items_text[i] = wrapper.data.name checked_items[i] = false end
+
+    local multi_del_layout = {
+      LinearLayout, orientation="vertical", padding="15dp", layout_width="fill",
+      {TextView, id="md_title", text="Delete Button", textSize="16sp", textColor="#2196F3", paddingBottom="10dp"},
+      {ListView, id="md_lv", layout_width="fill", layout_weight=1},
+      {LinearLayout, layout_width="fill", orientation="horizontal", paddingTop="10dp",
+        {TextView, text="Confirm Delete", id="md_confirm_btn"},
+        {TextView, text="Close Button", id="md_cancel_btn"}}
+    }
+    local md_view = loadlayout(multi_del_layout)
+    md_view.findViewById(md_title.id).setTypeface(Typeface.DEFAULT_BOLD)
+    style_as_button(md_view.findViewById(md_confirm_btn.id), "#F44336")
+    style_as_button(md_view.findViewById(md_cancel_btn.id), "#9E9E9E")
+    
+    local md_dlg = LuaDialog(service).setView(md_view)
+    md_lv.setAdapter(ArrayAdapter(service, android.R.layout.simple_list_item_multiple_choice, items_text))
+    md_lv.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE)
+    md_lv.onItemClick = function(l,v,p,i) checked_items[i+1] = md_lv.isItemChecked(i) end
+
+    md_confirm_btn.onClick = function()
+      local delete_confirm_layout_final = {
+        LinearLayout, orientation="vertical", padding="15dp", layout_width="fill",
+        {TextView, id="cf_title", text="Confirm!", textSize="16sp", textColor="#2196F3", paddingBottom="10dp"},
+        {TextView, text="Kya aap chuni hui files delete karna chahte hain?", textSize="14sp", paddingBottom="15dp"},
+        {LinearLayout, layout_width="fill", orientation="horizontal",
+          {TextView, text="Yes", id="cf_yes"},
+          {TextView, text="No", id="cf_no"}}
+      }
+      -- Properly generated view component from layout to ensure Android generic view parameters are accurate
+      local dcf_view = loadlayout(delete_confirm_layout_final)
+      dcf_view.findViewById(cf_title.id).setTypeface(Typeface.DEFAULT_BOLD)
+      style_as_button(dcf_view.findViewById(cf_yes.id), "#F44336")
+      style_as_button(dcf_view.findViewById(cf_no.id), "#9E9E9E")
+      
+      -- Crash completely resolved by loading 'dcf_view' component rather than direct raw structure array
+      local cf_dlg = LuaDialog(service).setView(dcf_view)
+      
+      cf_yes.onClick = function()
+        local fresh_all_data = load_data()
+        local to_delete_indices = {}
+        for k, checked in ipairs(checked_items) do if checked then table.insert(to_delete_indices, active_filtered_list[k].original_index) end end
+        table.sort(to_delete_indices, function(a,b) return a > b end)
+        for _, orig_idx in ipairs(to_delete_indices) do table.remove(fresh_all_data, orig_idx) end
+        save_data(fresh_all_data)
+        service.speak("Delete ho gaya")
+        cf_dlg.dismiss() md_dlg.dismiss() l_dlg.dismiss()
+        last_selected_item_index = 0
+        open_list_view_portal()
+      end
+      cf_no.onClick = function() cf_dlg.dismiss() end
+      cf_dlg.show()
+    end
+    md_cancel_btn.onClick = function() md_dlg.dismiss() end
+    md_dlg.show()
+  end
+
+  lv.onItemClick = function(l,v,p,i)
+    last_selected_item_index = i
+    local wrapper = active_filtered_list[i+1]
+    local idx = wrapper.original_index
+    local itm = all_data[idx]
+    
+    local total_chars = string.len(itm.script)
+    local _, total_lines = string.gsub(itm.script, "\n", "")
+    total_lines = total_lines + 1
+
+    local d_layout = {
+      LinearLayout, orientation="vertical", padding="10dp",
+      {TextView, text="Name: "..itm.name, id="detail_title_tv", textSize="16sp", textColor="#2196F3"},
+      {TextView, id="stats_tv", text="Chars: "..total_chars.." | Lines: "..total_lines, padding="5dp"},
+      {TextView, id="content_header_tv", text="Saved Data Content:", paddingTop="5dp"},
+      {EditText, id="preview_ed", text=itm.script, layout_width="fill", minLines=5, maxLines=8, gravity="top", backgroundColor="#f5f5f5", padding="5dp"},
+      {TextView, text=itm.is_fav and "⭐ Unstar" or "⭐ Star", id="fav_btn"},
+      {TextView, text="Edit Button", id="edit_btn_action"},
+      {TextView, text="Copy Button", id="cp_btn"},
+      {TextView, text="Share Button", id="sh_btn"},
+      {TextView, text="Delete Button", id="dl_btn"},
+      {TextView, text="Back Button", id="bk_btn"}}
+    
+    local d_view = loadlayout(d_layout)
+    d_view.findViewById(detail_title_tv.id).setTypeface(Typeface.DEFAULT_BOLD)
+    d_view.findViewById(content_header_tv.id).setTypeface(Typeface.DEFAULT_BOLD)
+    d_view.findViewById(stats_tv.id).setTypeface(Typeface.defaultFromStyle(Typeface.ITALIC))
+    
+    local preview_view = d_view.findViewById(preview_ed.id)
+    preview_view.setKeyListener(nil) preview_view.setFocusable(true)
+    
+    style_as_button(d_view.findViewById(fav_btn.id), "#FF9800")
+    style_as_button(d_view.findViewById(edit_btn_action.id), "#2196F3")
+    style_as_button(d_view.findViewById(cp_btn.id), "#009688")
+    style_as_button(d_view.findViewById(sh_btn.id), "#4CAF50")
+    style_as_button(d_view.findViewById(dl_btn.id), "#E91E63")
+    style_as_button(d_view.findViewById(bk_btn.id), "#9E9E9E")
+    
+    local d_dlg = LuaDialog(service).setView(d_view)
+
+    fav_btn.onClick = function()
+      itm.is_fav = not itm.is_fav save_data(all_data)
+      service.speak(itm.is_fav and "Star set" or "Unstar set")
+      d_dlg.dismiss() l_dlg.dismiss() open_list_view_portal()
+    end
+
+    edit_btn_action.onClick = function()
+      d_dlg.dismiss() l_dlg.dismiss()
+      open_add_edit_dialog(idx, itm, function() open_list_view_portal() end)
+    end
+
+    cp_btn.onClick = function() service.setClip(itm.script) service.speak("Copy ho gaya") end
+
+    sh_btn.onClick = function()
+      d_dlg.dismiss() l_dlg.dismiss() main_dlg.dismiss()
+      Handler().postDelayed(Runnable({run = function()
+        local intent = Intent(Intent.ACTION_SEND).setType("text/plain")
+        intent.putExtra(Intent.EXTRA_TEXT, tostring(itm.script))
+        service.startActivity(Intent.createChooser(intent, "Share").setFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      end}), 150)
+    end
+
+    dl_btn.onClick = function()
+      local del_conf_layout = {
+        LinearLayout, orientation="vertical", padding="15dp", layout_width="fill",
+        {TextView, text="Delete?", id="dc_title", textSize="16sp", textColor="#2196F3", paddingBottom="10dp"},
+        {TextView, text="Kya aap isko delete karna chahte hain?", textSize="14sp", paddingBottom="15dp"},
+        {LinearLayout, layout_width="fill", orientation="horizontal",
+          {TextView, text="Delete Button", id="dc_yes"},
+          {TextView, text="Cancel", id="dc_no"}}
+      }
+      local dc_view = loadlayout(del_conf_layout)
+      dc_view.findViewById(dc_title.id).setTypeface(Typeface.DEFAULT_BOLD)
+      style_as_button(dc_view.findViewById(dc_yes.id), "#F44336")
+      style_as_button(dc_view.findViewById(dc_no.id), "#9E9E9E")
+      local dc_dlg = LuaDialog(service).setView(dc_view)
+      
+      dc_yes.onClick = function()
+        table.remove(all_data, idx) save_data(all_data) service.speak("Delete ho gaya")
+        dc_dlg.dismiss() d_dlg.dismiss() l_dlg.dismiss()
+        if last_selected_item_index > 0 then last_selected_item_index = last_selected_item_index - 1 end
+        open_list_view_portal()
+      end
+      dc_no.onClick = function() dc_dlg.dismiss() end
+      dc_dlg.show()
+    end
+    bk_btn.onClick = function() d_dlg.dismiss() end
+    d_dlg.show()
+  end
+  lb.onClick = function() l_dlg.dismiss() end
+  l_dlg.show()
+end
+
+view_btn.onClick = function() last_selected_item_index = 0 open_list_view_portal() end
+
+-- ========== Section 4: Clean Share Structure ==========
+clean_share_btn.onClick = function()
+  local base_code = [=[require "import"
+import "android.widget.*"
+import "android.view.*"
+import "android.content.*"
+import "android.os.Handler"
+import "java.lang.Runnable"
+import "java.io.File"
+import "android.text.Editable"
+import "android.text.TextWatcher"
+import "android.graphics.Typeface"
+import "android.graphics.drawable.GradientDrawable"
+import "android.graphics.Color"
+
+local creator_name = "Mohammed Usman"
+local app_title = "Data Saver Extension Pro - Creator: Mohammed Usman"
+
+local function style_as_button(view, bg_color)
+  local gd = GradientDrawable()
+  gd.setColor(Color.parseColor(bg_color or "#2196F3"))
+  gd.setCornerRadius(12)
+  view.setBackgroundDrawable(gd)
+  view.setPadding(30, 25, 30, 25)
+  view.setGravity(Gravity.CENTER)
+  view.setTextColor(Color.parseColor("#FFFFFF"))
+  view.setTextSize(16)
+  view.setFocusable(true)
+  view.setClickable(true)
+  local lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.FILL_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+  lp.setMargins(15, 12, 15, 12)
+  view.setLayoutParams(lp)
+end
+
+local function dump_value(val)
+  if type(val) == "table" then
+    local res = {"{\n"}
+    for k, v in pairs(val) do
+      if type(k) == "string" then
+        table.insert(res, string.format("[%q]=%s,\n", k, dump_value(v)))
+      else
+        table.insert(res, string.format("[%d]=%s,\n", k, dump_value(v)))
+      end
+    end
+    table.insert(res, "}")
+    return table.concat(res)
+  elseif type(val) == "string" then return string.format("%q", val)
+  else return tostring(val) end
+end
+
+local function save_data(data)
+  local path = service.getFilesDir().toString().."/Data_Saver_Extension_Pro_Internal.dat"
+  local f = io.open(path, "w")
+  if f then f:write("return " .. dump_value(data)) f:close() return true end
+  return false
+end
+
+local function load_data()
+  local path = service.getFilesDir().toString().."/Data_Saver_Extension_Pro_Internal.dat"
+  local f = io.open(path, "r")
+  if f then
+    local content = f:read("*a") f:close()
+    local chunk = load(content)
+    if chunk then
+      local ok, data = pcall(chunk)
+      if ok and type(data) == "table" then return data end
+    end
+  end
+  return {}
+end
+
+local function check_duplicate_text(new_text)
+  local current_data = load_data()
+  for _, item in ipairs(current_data) do if item.script == new_text then return item.name end end
+  return nil
+end
+
+local function get_custom_date()
+  local months = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"}
+  local day = os.date("%d")
+  local month_idx = tonumber(os.date("%m"))
+  local year = os.date("%Y")
+  return day .. " " .. months[month_idx] .. " " .. year
+end
+
+local layout = {
+  LinearLayout, orientation = "vertical", layout_width = "fill", backgroundColor = "#ffffff",
+  {TextView, text = app_title, id = "main_title_tv", layout_width = "fill", gravity = "center", textSize = "16sp", padding = "12dp", textColor = "#2196F3"},
+  {TextView, text="Add Data Button", id="add_btn"},
+  {TextView, text="Import File Button", id="import_btn"},
+  {TextView, text="Data List Button", id="view_btn"},
+  {TextView, text="Share Extension Only (Data Safe)", id="clean_share_btn"},
+  {TextView, text="Backup & Restore Button", id="backup_btn"},
+  {TextView, text="Close Button", id="exit_main"},
+}
+
+local main_view = loadlayout(layout)
+main_view.findViewById(main_title_tv.id).setTypeface(Typeface.DEFAULT_BOLD)
+style_as_button(main_view.findViewById(add_btn.id), "#2196F3")
+style_as_button(main_view.findViewById(import_btn.id), "#2196F3")
+style_as_button(main_view.findViewById(view_btn.id), "#2196F3")
+style_as_button(main_view.findViewById(clean_share_btn.id), "#009688")
+style_as_button(main_view.findViewById(backup_btn.id), "#2196F3")
+style_as_button(main_view.findViewById(exit_main.id), "#F44336")
+local main_dlg = LuaDialog(service).setView(main_view)
+local last_selected_item_index = 0
+
+local function show_safe_alert(title_text, message_text)
+  local alert_layout = {
+    LinearLayout, orientation="vertical", padding="15dp", layout_width="fill",
+    {TextView, id="alert_title", text=title_text, textSize="16sp", textColor="#2196F3", paddingBottom="10dp"},
+    {TextView, text=message_text, textSize="14sp", paddingBottom="15dp"},
+    {TextView, text="OK", id="alert_ok_btn"}
+  }
+  local alert_view = loadlayout(alert_layout)
+  alert_view.findViewById(alert_title.id).setTypeface(Typeface.DEFAULT_BOLD)
+  style_as_button(alert_view.findViewById(alert_ok_btn.id), "#2196F3")
+  local alert_dlg = LuaDialog(service).setView(alert_view)
+  alert_ok_btn.onClick = function() alert_dlg.dismiss() end
+  alert_dlg.show()
+end
+
+local function open_add_edit_dialog(edit_index, existing_item, on_close_callback)
+  local is_edit = (edit_index ~= nil)
+  local categories = {"Lua Script", "Text Note", "Important Key", "Other"}
+  local al = {
+    LinearLayout, orientation="vertical", layout_height="fill", layout_width="fill",
+    {ScrollView, layout_weight=1, {LinearLayout, orientation="vertical", padding="15dp",
+        {TextView, text="Select Category:"}, {Spinner, id="cat_spinner", layout_width="fill", layout_marginBottom="10dp"},
+        {TextView, text="Yahan Naam Likhein:"}, {EditText, id="t", layout_width="fill", text = is_edit and existing_item.name or ""},
+        {TextView, text="Yahan Data Paste Karen Ya Data Add Karen:"}, {EditText, id="c", layout_width="fill", minLines=10, gravity="top", text = is_edit and existing_item.script or ""}}},
+    {LinearLayout, orientation="vertical", padding="10dp", {TextView, text=is_edit and "Update Data Button" or "Save Data Button", id="s"}, {TextView, text="Back Button", id="b"}}}
+  local add_view = loadlayout(al)
+  style_as_button(add_view.findViewById(s.id), "#2196F3")
+  style_as_button(add_view.findViewById(b.id), "#9E9E9E")
+  local ad = LuaDialog(service).setView(add_view)
+  local spin_adapter = ArrayAdapter(service, android.R.layout.simple_spinner_item, categories)
+  spin_adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+  cat_spinner.setAdapter(spin_adapter)
+  if is_edit and existing_item.category then
+    for idx, cat in ipairs(categories) do if cat == existing_item.category then cat_spinner.setSelection(idx-1) break end end
+  end
+  s.onClick = function()
+    local title = t.getText().toString()
+    local content = c.getText().toString()
+    local selected_cat = categories[cat_spinner.getSelectedItemPosition() + 1]
+    if title == "" or content == "" then service.speak("Naam aur Data likhna lazmi hai") return end
+    if not is_edit or (is_edit and content ~= existing_item.script) then
+      local existing_name = check_duplicate_text(content)
+      if existing_name then service.speak("Yeh data pehle hi save hai") ad.dismiss() show_safe_alert("Warning!", "Yeh data pehle se '"..existing_name.."' ke naam se maujood hai.") return end
+    end
+    local d = load_data()
+    if is_edit then d[edit_index] = {name = title, script = content, category = selected_cat, date = existing_item.date or get_custom_date(), is_fav = existing_item.is_fav or false} service.speak("Data update ho gaya")
+    else table.insert(d, {name = title, script = content, category = selected_cat, date = get_custom_date(), is_fav = false}) service.speak("Data save ho gaya") end
+    save_data(d) ad.dismiss() if on_close_callback then on_close_callback() end
+  end
+  b.onClick = function() ad.dismiss() if on_close_callback then on_close_callback() end end
+  ad.show()
+end
+
+add_btn.onClick = function() open_add_edit_dialog(nil, nil, nil) end
+
+import_btn.onClick = function()
+  local function show_browser(path)
+    local files = {}
+    local list = File(path).listFiles()
+    if list then for i = 0, #list - 1 do table.insert(files, list[i].getName()) end end
+    local b_layout = {
+      LinearLayout, orientation="vertical", layout_width="fill",
+      {TextView, text="Folder: "..path, padding="10dp"}, {ListView, id="flv", layout_width="fill", layout_weight=1},
+      {LinearLayout, layout_width="fill", {TextView, text="Select File Button", id="done_btn"}, {TextView, text="Back Button", id="back_btn"}}}
+    local browser_view = loadlayout(b_layout)
+    style_as_button(browser_view.findViewById(done_btn.id), "#2196F3")
+    style_as_button(browser_view.findViewById(back_btn.id), "#9E9E9E")
+    local b_dlg = LuaDialog(service).setView(browser_view)
+    flv.setAdapter(ArrayAdapter(service, android.R.layout.simple_list_item_1, files))
+    local sel_path = nil
+    flv.onItemClick = function(l,v,p,i)
+      local np = path.."/"..files[i+1]
+      if File(np).isDirectory() then b_dlg.dismiss() show_browser(np) else sel_path = np service.speak("File select ho gayi") end
+    end
+    done_btn.onClick = function()
+      if not sel_path then return end
+      b_dlg.dismiss()
+      local f = io.open(sel_path, "r")
+      if f then
+        local content = f:read("*a") f:close()
+        local existing_name = check_duplicate_text(content)
+        if existing_name then service.speak("Duplicate file hai") show_safe_alert("Duplicate!", "Is file ka data pehle se '"..existing_name.."' ke naam se save hai.") return end
+        local edit_l = {LinearLayout, orientation="vertical", padding="15dp", {TextView, text="Yahan Naam Likhein:"}, {EditText, id="en", text=File(sel_path).getName(), layout_width="fill"}, {TextView, text="Save Data Button", id="save_imported"}}
+        local edit_view = loadlayout(edit_l)
+        style_as_button(edit_view.findViewById(save_imported.id), "#2196F3")
+        local e_dlg = LuaDialog(service).setView(edit_view)
+        save_imported.onClick = function()
+          local d = load_data() table.insert(d, {name=en.getText().toString(), script=content, category="Other", date=get_custom_date(), is_fav=false}) save_data(d) service.speak("Save ho gaya") e_dlg.dismiss()
+        end
+        e_dlg.show()
+      end
+    end
+    back_btn.onClick = function() b_dlg.dismiss() end
+    b_dlg.show()
+  end
+  show_browser("/sdcard")
+end
+
+local function open_list_view_portal()
+  local all_data = load_data()
+  if #all_data == 0 then service.speak("List khali hai") return end
+  local display_indices = {}
+  for idx, item in ipairs(all_data) do table.insert(display_indices, {original_index = idx, data = item}) end
+  table.sort(display_indices, function(a, b)
+    if a.data.is_fav and not b.data.is_fav then return true end
+    if not a.data.is_fav and b.data.is_fav then return false end
+    return a.original_index < b.original_index
+  end)
+  local l_layout = {
+    LinearLayout, orientation="vertical", layout_width="fill", padding="5dp",
+    {EditText, id="search_bar", hint="Search Button", layout_width="fill", layout_margin="5dp"},
+    {LinearLayout, layout_width="fill", orientation="horizontal", {TextView, text="Delete Button", id="multi_del_btn"}, {TextView, text="Refresh Button", id="refresh_list_btn"}},
+    {ListView, id="lv", layout_width="fill", layout_weight=1}, {TextView, text="Back Button", id="lb"}}
+  local l_view = loadlayout(l_layout)
+  style_as_button(l_view.findViewById(multi_del_btn.id), "#E91E63")
+  style_as_button(l_view.findViewById(refresh_list_btn.id), "#4CAF50")
+  style_as_button(l_view.findViewById(lb.id), "#9E9E9E")
+  local l_dlg = LuaDialog(service).setView(l_view)
+  local function render_list(filter_text)
+    local filtered_display = {}
+    local display_strings = {}
+    for _, wrapper in ipairs(display_indices) do
+      local item = wrapper.data
+      local matches_search = true
+      if filter_text and filter_text ~= "" then matches_search = string.find(string.lower(item.name), string.lower(filter_text)) or string.find(string.lower(item.category or ""), string.lower(filter_text)) end
+      if matches_search then
+        table.insert(filtered_display, wrapper)
+        local star_prefix = item.is_fav and "⭐ " or ""
+        local date_tag = item.date and (" (" .. item.date .. ")") or ""
+        table.insert(display_strings, star_prefix .. item.name .. date_tag)
+      end
+    end
+    lv.setAdapter(ArrayAdapter(service, android.R.layout.simple_list_item_1, display_strings))
+    return filtered_display
+  end
+  local active_filtered_list = render_list("")
+  if last_selected_item_index < #active_filtered_list then lv.setSelection(last_selected_item_index) end
+  search_bar.addTextChangedListener(TextWatcher{onTextChanged=function(s, start, before, count) active_filtered_list = render_list(tostring(s)) end})
+  refresh_list_btn.onClick = function() l_dlg.dismiss() open_list_view_portal() end
+  multi_del_btn.onClick = function()
+    if #active_filtered_list == 0 then return end
+    local checked_items = {} local items_text = {}
+    for i, wrapper in ipairs(active_filtered_list) do items_text[i] = wrapper.data.name checked_items[i] = false end
+    local multi_del_layout = {LinearLayout, orientation="vertical", padding="15dp", layout_width="fill", {TextView, id="md_title", text="Delete Button", textSize="16sp", textColor="#2196F3", paddingBottom="10dp"}, {ListView, id="md_lv", layout_width="fill", layout_weight=1}, {LinearLayout, layout_width="fill", orientation="horizontal", paddingTop="10dp", {TextView, text="Confirm Delete", id="md_confirm_btn"}, {TextView, text="Close Button", id="md_cancel_btn"}}}
+    local md_view = loadlayout(multi_del_layout)
+    md_view.findViewById(md_title.id).setTypeface(Typeface.DEFAULT_BOLD)
+    style_as_button(md_view.findViewById(md_confirm_btn.id), "#F44336")
+    style_as_button(md_view.findViewById(md_cancel_btn.id), "#9E9E9E")
+    local md_dlg = LuaDialog(service).setView(md_view)
+    md_lv.setAdapter(ArrayAdapter(service, android.R.layout.simple_list_item_multiple_choice, items_text))
+    md_lv.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE)
+    md_lv.onItemClick = function(l,v,p,i) checked_items[i+1] = md_lv.isItemChecked(i) end
+    md_confirm_btn.onClick = function()
+      local delete_confirm_layout_final = {LinearLayout, orientation="vertical", padding="15dp", layout_width="fill", {TextView, id="cf_title", text="Confirm!", textSize="16sp", textColor="#2196F3", paddingBottom="10dp"}, {TextView, text="Kya aap chuni hui files delete karna chahte hain?", textSize="14sp", paddingBottom="15dp"}, {LinearLayout, layout_width="fill", orientation="horizontal", {TextView, text="Yes", id="cf_yes"}, {TextView, text="No", id="cf_no"}}}
+      local dcf_view = loadlayout(delete_confirm_layout_final)
+      dcf_view.findViewById(cf_title.id).setTypeface(Typeface.DEFAULT_BOLD)
+      style_as_button(dcf_view.findViewById(cf_yes.id), "#F44336")
+      style_as_button(dcf_view.findViewById(cf_no.id), "#9E9E9E")
+      local cf_dlg = LuaDialog(service).setView(dcf_view)
+      cf_yes.onClick = function()
+        local fresh_all_data = load_data() local to_delete_indices = {}
+        for k, checked in ipairs(checked_items) do if checked then table.insert(to_delete_indices, active_filtered_list[k].original_index) end end
+        table.sort(to_delete_indices, function(a,b) return a > b end)
+        for _, orig_idx in ipairs(to_delete_indices) do table.remove(fresh_all_data, orig_idx) end
+        save_data(fresh_all_data) service.speak("Delete ho gaya") cf_dlg.dismiss() md_dlg.dismiss() l_dlg.dismiss()
+        last_selected_item_index = 0 open_list_view_portal()
+      end
+      cf_no.onClick = function() cf_dlg.dismiss() end
+      cf_dlg.show()
+    end
+    md_cancel_btn.onClick = function() md_dlg.dismiss() end
+    md_dlg.show()
+  end
+
+  lv.onItemClick = function(l,v,p,i)
+    last_selected_item_index = i
+    local wrapper = active_filtered_list[i+1]
+    local idx = wrapper.original_index
+    local itm = all_data[idx]
+    local total_chars = string.len(itm.script)
+    local _, total_lines = string.gsub(itm.script, "\n", "")
+    total_lines = total_lines + 1
+    
+    local d_layout = {
+      LinearLayout, orientation="vertical", padding="10dp",
+      {TextView, text="Name: "..itm.name, id="detail_title_tv", textSize="16sp", textColor="#2196F3"}, 
+      {TextView, id="stats_tv", text="Chars: "..total_chars.." | Lines: "..total_lines, padding="5dp"}, {TextView, id="content_header_tv", text="Saved Data Content:", paddingTop="5dp"},
+      {EditText, id="preview_ed", text=itm.script, layout_width="fill", minLines=5, maxLines=8, gravity="top", backgroundColor="#f5f5f5", padding="5dp"},
+      {TextView, text=itm.is_fav and "⭐ Unstar" or "⭐ Star", id="fav_btn"}, {TextView, text="Edit Button", id="edit_btn_action"}, {TextView, text="Copy Button", id="cp_btn"}, {TextView, text="Share Button", id="sh_btn"}, {TextView, text="Delete Button", id="dl_btn"}, {TextView, text="Back Button", id="bk_btn"}}
+    local d_view = loadlayout(d_layout)
+    d_view.findViewById(detail_title_tv.id).setTypeface(Typeface.DEFAULT_BOLD)
+    d_view.findViewById(content_header_tv.id).setTypeface(Typeface.DEFAULT_BOLD)
+    d_view.findViewById(stats_tv.id).setTypeface(Typeface.defaultFromStyle(Typeface.ITALIC))
+    local preview_view = d_view.findViewById(preview_ed.id)
+    preview_view.setKeyListener(nil) preview_view.setFocusable(true)
+    style_as_button(d_view.findViewById(fav_btn.id), "#FF9800")
+    style_as_button(d_view.findViewById(edit_btn_action.id), "#2196F3")
+    style_as_button(d_view.findViewById(cp_btn.id), "#009688")
+    style_as_button(d_view.findViewById(sh_btn.id), "#4CAF50")
+    style_as_button(d_view.findViewById(dl_btn.id), "#E91E63")
+    style_as_button(d_view.findViewById(bk_btn.id), "#9E9E9E")
+    local d_dlg = LuaDialog(service).setView(d_view)
+    fav_btn.onClick = function() itm.is_fav = not itm.is_fav save_data(all_data) service.speak(itm.is_fav and "Star set" or "Unstar set") d_dlg.dismiss() l_dlg.dismiss() open_list_view_portal() end
+    edit_btn_action.onClick = function() d_dlg.dismiss() l_dlg.dismiss() open_add_edit_dialog(idx, itm, function() open_list_view_portal() end) end
+    cp_btn.onClick = function() service.setClip(itm.script) service.speak("Copy ho gaya") end
+    sh_btn.onClick = function()
+      d_dlg.dismiss() l_dlg.dismiss() main_dlg.dismiss()
+      Handler().postDelayed(Runnable({run = function()
+        local intent = Intent(Intent.ACTION_SEND).setType("text/plain")
+        intent.putExtra(Intent.EXTRA_TEXT, tostring(itm.script))
+        service.startActivity(Intent.createChooser(intent, "Share").setFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      end}), 150)
+    end
+    dl_btn.onClick = function()
+      local del_conf_layout = {LinearLayout, orientation="vertical", padding="15dp", layout_width="fill", {TextView, id="dc_title", text="Delete?", textSize="16sp", textColor="#2196F3", paddingBottom="10dp"}, {TextView, text="Kya aap isko delete karna chahte hain?", textSize="14sp", paddingBottom="15dp"}, {LinearLayout, layout_width="fill", orientation="horizontal", {TextView, text="Delete Button", id="dc_yes"}, {TextView, text="Cancel", id="dc_no"}}}
+      local dc_view = loadlayout(del_conf_layout)
+      dc_view.findViewById(dc_title.id).setTypeface(Typeface.DEFAULT_BOLD)
+      style_as_button(dc_view.findViewById(dc_yes.id), "#F44336")
+      style_as_button(dc_view.findViewById(dc_no.id), "#9E9E9E")
+      local dc_dlg = LuaDialog(service).setView(dc_view)
+      dc_yes.onClick = function() table.remove(all_data, idx) save_data(all_data) service.speak("Delete ho gaya") dc_dlg.dismiss() d_dlg.dismiss() l_dlg.dismiss() if last_selected_item_index > 0 then last_selected_item_index = last_selected_item_index - 1 end open_list_view_portal() end
+      dc_no.onClick = function() dc_dlg.dismiss() end
+      dc_dlg.show()
+    end
+    bk_btn.onClick = function() d_dlg.dismiss() end
+    d_dlg.show()
+  end
+  lb.onClick = function() l_dlg.dismiss() end
+  l_dlg.show()
+end
+
+view_btn.onClick = function() last_selected_item_index = 0 open_list_view_portal() end
+
+clean_share_btn.onClick = function()
+  service.speak("Preparing clean file share")
+  main_dlg.dismiss()
+  
+  Handler().postDelayed(Runnable({run = function()
+    local intent = Intent(Intent.ACTION_SEND).setType("text/plain")
+    intent.putExtra(Intent.EXTRA_TEXT, tostring(base_code))
+    service.startActivity(Intent.createChooser(intent, "Share Clean Extension Pro").setFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+  end}), 150)
+end
+
+backup_btn.onClick = function()
+  local b_mode_layout = {LinearLayout, orientation="vertical", padding="15dp", {TextView, text="Backup & Restore", id="b_title_tv", textSize="16sp", gravity="center", padding="5dp"}, {TextView, text="Export Backup Button", id="exp_json"}, {TextView, text="Restore Backup Button", id="imp_json"}, {TextView, text="Back Button", id="back_b_main"}}
+  local b_view = loadlayout(b_mode_layout)
+  b_view.findViewById(b_title_tv.id).setTypeface(Typeface.DEFAULT_BOLD)
+  style_as_button(b_view.findViewById(exp_json.id), "#2196F3")
+  style_as_button(b_view.findViewById(imp_json.id), "#4CAF50")
+  style_as_button(b_view.findViewById(back_b_main.id), "#9E9E9E")
+  local b_main_dlg = LuaDialog(service).setView(b_view)
+  exp_json.onClick = function()
+    local current_data = load_data() if #current_data == 0 then service.speak("No data") return end
+    local backup_path = "/sdcard/Data_Saver_Extension_Pro_Backup.json"
+    local f = io.open(backup_path, "w")
+    if f then f:write(dump_value(current_data)) f:close() service.speak("Backup complete") show_safe_alert("Success!", "Backup file save ho gayi:\n" .. backup_path) else service.speak("Permission error") end
+    b_main_dlg.dismiss()
+  end
+  imp_json.onClick = function()
+    local backup_path = "/sdcard/Data_Saver_Extension_Pro_Backup.json"
+    local f = io.open(backup_path, "r")
+    if not f then service.speak("No backup file") show_safe_alert("Error!", "Backup file nahi mili.") return end
+    local content = f:read("*a") f:close()
+    local chunk = load("return " .. content)
+    if chunk then
+      local ok, parsed_data = pcall(chunk)
+      if ok and type(parsed_data) == "table" then save_data(parsed_data) service.speak("Restore complete") show_safe_alert("Success!", "Data restore ho gaya.") else service.speak("File error") end
+    else service.speak("Parsing failed") end
+    b_main_dlg.dismiss()
+  end
+  back_b_main.onClick = function() b_main_dlg.dismiss() end
+  b_main_dlg.show()
+end
+
+exit_main.onClick = function() main_dlg.dismiss() end
+main_dlg.show()
+return true]=]
+
+  service.speak("Preparing clean file share")
+  main_dlg.dismiss()
+
+  -- Directly triggers android intent system without executing ANY local data wipes
+  Handler().postDelayed(Runnable({run = function()
+    local intent = Intent(Intent.ACTION_SEND).setType("text/plain")
+    intent.putExtra(Intent.EXTRA_TEXT, tostring(base_code))
+    service.startActivity(Intent.createChooser(intent, "Share Clean Extension Pro").setFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+  end}), 150)
+end
+
+-- Section 5: Backup & Restore
+backup_btn.onClick = function()
+  local b_mode_layout = {
+    LinearLayout, orientation="vertical", padding="15dp",
+    {TextView, text="Backup & Restore", id="b_title_tv", textSize="16sp", gravity="center", padding="5dp"},
+    {TextView, text="Export Backup Button", id="exp_json"},
+    {TextView, text="Restore Backup Button", id="imp_json"},
+    {TextView, text="Back Button", id="back_b_main"}
+  }
+  local b_view = loadlayout(b_mode_layout)
+  b_view.findViewById(b_title_tv.id).setTypeface(Typeface.DEFAULT_BOLD)
+  style_as_button(b_view.findViewById(exp_json.id), "#2196F3")
+  style_as_button(b_view.findViewById(imp_json.id), "#4CAF50")
+  style_as_button(b_view.findViewById(back_b_main.id), "#9E9E9E")
+  local b_main_dlg = LuaDialog(service).setView(b_view)
+  
+  exp_json.onClick = function()
+    local current_data = load_data()
+    if #current_data == 0 then service.speak("No data") return end
+    
+    local backup_path = "/sdcard/Data_Saver_Extension_Pro_Backup.json"
+    local f = io.open(backup_path, "w")
+    if f then
+      f:write(dump_value(current_data)) f:close()
+      service.speak("Backup complete")
+      show_safe_alert("Success!", "Backup file save ho gayi:\n" .. backup_path)
+    else
+      service.speak("Permission error")
+    end
+    b_main_dlg.dismiss()
+  end
+
+  imp_json.onClick = function()
+    local backup_path = "/sdcard/Data_Saver_Extension_Pro_Backup.json"
+    local f = io.open(backup_path, "r")
+    if not f then service.speak("No backup file") show_safe_alert("Error!", "Backup file nahi mili.") return end
+    
+    local content = f:read("*a") f:close()
+    local chunk = load("return " .. content)
+    if chunk then
+      local ok, parsed_data = pcall(chunk)
+      if ok and type(parsed_data) == "table" then
+        save_data(parsed_data) service.speak("Restore complete") show_safe_alert("Success!", "Data restore ho gaya.")
+      else
+        service.speak("File error")
+      end
+    else
+      service.speak("Parsing failed")
+    end
+    b_main_dlg.dismiss()
+  end
+
+  back_b_main.onClick = function() b_main_dlg.dismiss() end
+  b_main_dlg.show()
+end
+
+exit_main.onClick = function() main_dlg.dismiss() end
+main_dlg.show()
+return true
