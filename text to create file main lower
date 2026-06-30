@@ -1,0 +1,427 @@
+-- Extension Name: Jieshuo_Text_To_File_Converter | Creator: Mohammad Usman
+-- Version: 4.5 (Final Optimized & Cleaned Version)
+-- Compatibility: Android 8.0 to Android 14+ (Jieshuo Screens)
+
+require "import"
+import "android.widget.*"
+import "android.view.*"
+import "android.view.accessibility.AccessibilityEvent"
+import "android.content.Context"
+import "android.content.Intent"
+import "android.net.Uri"
+import "java.io.File"
+import "java.io.FileOutputStream"
+import "java.io.FileInputStream"
+
+local dlg = LuaDialog()
+
+-- Samsung Storage / Documents Folder Path Setup
+local folderPath = "/sdcard/Documents/Jieshuo_Text_To_File_Converter/"
+local dir = File(folderPath)
+if not dir.exists() then
+  dir.mkdirs()
+end
+
+local whatsappNumber = "+923261421100"
+
+-- Function: TTS Voice Feedback aur Toast dono ek sath chalane ke liye
+local function speakAndToast(msg)
+  service.speak(msg)
+  Toast.makeText(service, msg, Toast.LENGTH_SHORT).show()
+end
+
+-- Function: Clipboard mein text copy karne ke liye
+local function copyToClipboard(text, successMsg)
+  if text == "" then
+    speakAndToast("Copy karne ke liye koi text nahi hai!")
+    return
+  end
+  import "android.content.ClipData"
+  local clipboard = service.getSystemService(Context.CLIPBOARD_SERVICE)
+  local clip = ClipData.newPlainText("Copied Text", text)
+  clipboard.setPrimaryClip(clip)
+  speakAndToast(successMsg or "Text successfully copy ho gaya hai")
+end
+
+-- Table to reference views safely without index crashes
+local views = {}
+
+-- Function: File list menu dikhane ke liye
+local function openFileListMenu()
+  local listDlg = LuaDialog()
+  listDlg.setTitle("Files List")
+  
+  local fileList = {}
+  local files = dir.listFiles()
+  
+  if files then
+    for i = 0, #files - 1 do
+      if files[i].isFile() and files[i].getName():find("%.txt$") then
+        table.insert(fileList, files[i].getName())
+      end
+    end
+  end
+  
+  if #fileList == 0 then
+    speakAndToast("Filhal koi file maujood nahi hai")
+    return
+  end
+  
+  local listLayout = {
+    LinearLayout,
+    orientation = "vertical",
+    padding = "20dp",
+    {
+      ListView,
+      id = "fileListView",
+      layout_width = "fill",
+      layout_height = "0dp",
+      layout_weight = 1,
+      choiceMode = ListView.CHOICE_MODE_SINGLE,
+    },
+    {
+      LinearLayout,
+      orientation = "horizontal",
+      layout_width = "fill",
+      gravity = "center",
+      {
+        Button,
+        text = "View Text",
+        layout_weight = 1,
+        id = "viewBtn",
+      },
+      {
+        Button,
+        text = "Delete",
+        layout_weight = 1,
+        id = "deleteBtn",
+      },
+      {
+        Button,
+        text = "Go Back",
+        layout_weight = 1,
+        id = "backBtn",
+      },
+    }
+  }
+  
+  local listViews = {}
+  listDlg.setView(loadlayout(listLayout, listViews))
+  
+  local adapter = ArrayAdapter(service, android.R.layout.simple_list_item_single_choice, fileList)
+  listViews.fileListView.Adapter = adapter
+  
+  local selectedPosition = -1
+  listViews.fileListView.onItemClick = function(parent, view, position, id)
+    selectedPosition = position
+  end
+  
+  -- View Text Click Logic (Main menu ke boxes mein text load karega aur list close hogi)
+  listViews.viewBtn.onClick = function()
+    if selectedPosition == -1 then
+      speakAndToast("Pehle list se koi file check karein")
+      return
+    end
+    
+    local fileName = fileList[selectedPosition + 1]
+    local targetFile = File(folderPath .. fileName)
+    
+    local fileIn = FileInputStream(targetFile)
+    local bytes = fileIn.readAllBytes()
+    fileIn.close()
+    local fileContent = String(bytes).toString()
+    
+    local cleanName = fileName:gsub("%.txt$", "")
+    views.edtFileName.Text = cleanName
+    views.edtTextContent.Text = fileContent
+    
+    speakAndToast("File ka text main menu mein load ho gaya hai")
+    listDlg.dismiss()
+  end
+  
+  -- Delete Button Click Logic with Confirmation Dialog Box
+  listViews.deleteBtn.onClick = function()
+    if selectedPosition == -1 then
+      speakAndToast("Pehle delete karne ke liye file check karein")
+      return
+    end
+    
+    local fileName = fileList[selectedPosition + 1]
+    local targetFile = File(folderPath .. fileName)
+    
+    local confirmDlg = LuaDialog()
+    confirmDlg.setTitle("Delete Confirm?")
+    
+    local confirmLayout = {
+      LinearLayout,
+      orientation = "vertical",
+      padding = "20dp",
+      {
+        TextView,
+        text = "Kya aap waqai '" .. fileName .. "' ko delete karna chahte hain?",
+        textSize = "16sp",
+        layout_marginBottom = "20dp",
+      },
+      {
+        LinearLayout,
+        orientation = "horizontal",
+        layout_width = "fill",
+        gravity = "center",
+        {
+          Button,
+          text = "Confirm Delete",
+          layout_weight = 1,
+          id = "btnRealDelete",
+        },
+        {
+          Button,
+          text = "Cancel",
+          layout_weight = 1,
+          id = "btnCancelDelete",
+        },
+      }
+    }
+    
+    local confirmViews = {}
+    confirmDlg.setView(loadlayout(confirmLayout, confirmViews))
+    
+    confirmViews.btnRealDelete.onClick = function()
+      if targetFile.delete() then
+        speakAndToast("File successfully delete kar di gai hai")
+        confirmDlg.dismiss()
+        listDlg.dismiss()
+        openFileListMenu() -- List ko auto refresh karne ke liye
+      else
+        speakAndToast("File delete nahi ho saki")
+        confirmDlg.dismiss()
+      end
+    end
+    
+    confirmViews.btnCancelDelete.onClick = function()
+      speakAndToast("Delete cancel kar diya gaya")
+      confirmDlg.dismiss()
+    end
+    
+    confirmDlg.show()
+  end
+  
+  listViews.backBtn.onClick = function()
+    listDlg.dismiss()
+  end
+  
+  listDlg.show()
+end
+
+-- Function: About and Support Menu Open Karne Ke Liye
+local function openAboutSupportMenu()
+  local aboutDlg = LuaDialog()
+  aboutDlg.setTitle("About and Support")
+  
+  local aboutLayout = {
+    LinearLayout,
+    orientation = "vertical",
+    padding = "25dp",
+    {
+      TextView,
+      text = "Creator: Mohammad Usman",
+      textSize = "16sp",
+      layout_marginBottom = "10dp",
+      textIsSelectable = true,
+    },
+    {
+      TextView,
+      text = "WhatsApp: " .. whatsappNumber,
+      textSize = "16sp",
+      layout_marginBottom = "20dp",
+      textIsSelectable = true,
+    },
+    {
+      Button,
+      id = "btnCopyNumber",
+      text = "Copy Number",
+      layout_width = "fill",
+      layout_marginBottom = "10dp",
+      textSize = "16sp",
+    },
+    {
+      Button,
+      id = "btnContactWhatsapp",
+      text = "Contact WhatsApp",
+      layout_width = "fill",
+      layout_marginBottom = "10dp",
+      textSize = "16sp",
+    },
+    {
+      Button,
+      id = "btnAboutBack",
+      text = "Go Back",
+      layout_width = "fill",
+      textSize = "16sp",
+    },
+  }
+  
+  local aboutViews = {}
+  aboutDlg.setView(loadlayout(aboutLayout, aboutViews))
+  
+  aboutViews.btnCopyNumber.onClick = function()
+    copyToClipboard(whatsappNumber, "WhatsApp number successfully copy ho gaya hai")
+  end
+  
+  aboutViews.btnContactWhatsapp.onClick = function()
+    local url = "https://api.whatsapp.com/send?phone=" .. whatsappNumber:gsub("%+", "")
+    local intent = Intent(Intent.ACTION_VIEW)
+    intent.setData(Uri.parse(url))
+    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    
+    aboutDlg.dismiss()
+    dlg.dismiss()
+    
+    service.startActivity(intent)
+    speakAndToast("Extension closed, WhatsApp open ho raha hai")
+  end
+  
+  aboutViews.btnAboutBack.onClick = function()
+    aboutDlg.dismiss()
+  end
+  
+  aboutDlg.show()
+end
+
+-- Main Extension Layout Setup (Wrapped inside ScrollView perfectly)
+local scrollContainer = {
+  ScrollView,
+  layout_width = "fill",
+  layout_height = "fill",
+  fillViewport = true,
+  {
+    LinearLayout,
+    orientation = "vertical",
+    padding = "25dp",
+    {
+      TextView,
+      id = "txtHeaderTitle",
+      text = "Jieshuo_Text_To_File_Converter | Creator: Mohammad Usman",
+      textSize = "15sp",
+      layout_marginBottom = "20dp",
+      gravity = "center",
+    },
+    {
+      EditText,
+      id = "edtFileName",
+      hint = "Jahan file ka name add karein",
+      layout_width = "fill",
+      layout_marginBottom = "15dp",
+    },
+    {
+      EditText,
+      id = "edtTextContent",
+      hint = "Jahan text add karein",
+      layout_width = "fill",
+      layout_height = "160dp",
+      gravity = "top",
+      layout_marginBottom = "15dp",
+    },
+    {
+      Button,
+      id = "btnCopyText",
+      text = "Copy Text",
+      layout_width = "fill",
+      layout_marginBottom = "10dp",
+      textSize = "16sp",
+    },
+    {
+      Button,
+      id = "btnCreateFile",
+      text = "Create File",
+      layout_width = "fill",
+      layout_marginBottom = "10dp",
+      textSize = "16sp",
+    },
+    {
+      Button,
+      id = "btnShowList",
+      text = "List",
+      layout_width = "fill",
+      layout_marginBottom = "10dp",
+      textSize = "16sp",
+    },
+    {
+      Button,
+      id = "btnAboutSupport",
+      text = "About and Support",
+      layout_width = "fill",
+      layout_marginBottom = "15dp",
+      textSize = "16sp",
+    },
+    {
+      Button,
+      id = "btnExit",
+      text = "Go Back",
+      layout_width = "fill",
+      textSize = "16sp",
+    },
+  }
+}
+
+dlg.setView(loadlayout(scrollContainer, views))
+
+-- Accessibility First Focus Rule
+views.txtHeaderTitle.requestFocus()
+views.txtHeaderTitle.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED)
+
+-- Copy Button Trigger
+views.btnCopyText.onClick = function()
+  local currentText = tostring(views.edtTextContent.Text)
+  copyToClipboard(currentText, "Text successfully copy ho gaya hai")
+end
+
+-- Create File Button Click Logic (With Duplicate Checking)
+views.btnCreateFile.onClick = function()
+  local fName = tostring(views.edtFileName.Text):gsub("^%s+", ""):gsub("%s+$", "")
+  local fContent = tostring(views.edtTextContent.Text)
+  
+  if fName == "" then
+    speakAndToast("Pehle file ka name add karein!")
+    return
+  end
+  
+  if fContent == "" then
+    speakAndToast("Pehle text add karein!")
+    return
+  end
+  
+  if not fName:find("%.txt$") then
+    fName = fName .. ".txt"
+  end
+  
+  local newFile = File(folderPath .. fName)
+  
+  -- Strict Check: File pehle se hai ya nahi
+  if newFile.exists() then
+    speakAndToast("Is name se file pehle se maujood hai, aap naya name likhein!")
+    return
+  end
+  
+  local fileOut = FileOutputStream(newFile)
+  fileOut.write(String(fContent).getBytes())
+  fileOut.close()
+  
+  speakAndToast("File successfully create ho gayi hai")
+  
+  views.edtFileName.Text = ""
+  views.edtTextContent.Text = ""
+end
+
+views.btnShowList.onClick = function()
+  openFileListMenu()
+end
+
+views.btnAboutSupport.onClick = function()
+  openAboutSupportMenu()
+end
+
+views.btnExit.onClick = function()
+  dlg.dismiss()
+end
+
+dlg.show()
