@@ -15,9 +15,21 @@ import "android.content.Context"
 import "android.media.RingtoneManager"
 import "java.util.Locale"
 
--- 1. Initial Variables
-selectedLangCode = selectedLangCode or "en-US"
-selectedLangName = selectedLangName or "English (US)"
+-- 1. Initial Variables (Persistent from SharedData)
+local savedLangCode = service.getSharedData("selectedLangCode")
+local savedLangName = service.getSharedData("selectedLangName")
+
+if savedLangCode and savedLangCode ~= "" then
+  selectedLangCode = savedLangCode
+else
+  selectedLangCode = "ur-PK"
+end
+
+if savedLangName and savedLangName ~= "" then
+  selectedLangName = savedLangName
+else
+  selectedLangName = "Urdu (Pakistan)"
+end
 
 -- 2. UNIVERSAL FOCUS FINDER (Stable for all Androids)
 local function getUniversalFocus()
@@ -36,29 +48,28 @@ local function applySmartEmoji(text)
   local t = text:lower()
   local emoji = ""
   
-  -- Mood Detection Rules
   if t:find("hah") or t:find("funny") or t:find("mazak") or t:find("hansi") or t:find("joke") then
-    emoji = " 馃槀馃ぃ馃槅"
+    emoji = " 😂🤣😅"
   elseif t:find("sad") or t:find("rona") or t:find("dukh") or t:find("sorry") or t:find("gham") then
-    emoji = " 馃槦馃槶馃挃"
+    emoji = " 😢😭💔"
   elseif t:find("love") or t:find("pyar") or t:find("ishq") or t:find("dil") or t:find("jan") then
-    emoji = " 鉂わ笍馃槏馃挅"
+    emoji = " ❤️😍💕"
   elseif t:find("gussa") or t:find("angry") or t:find("pagal") or t:find("bad") then
-    emoji = " 馃槨馃敟馃挗"
+    emoji = " 😠🔥💢"
   elseif t:find("hi") or t:find("hello") or t:find("salam") or t:find("hey") or t:find("kaise") then
-    emoji = " 馃憢馃槉馃尮"
+    emoji = " 👋😊🌸"
   elseif t:find("shukriya") or t:find("thanks") or t:find("meherbani") or t:find("jazakallah") then
-    emoji = " 馃檹馃槆鉁�"
+    emoji = " 🙏😇✨"
   elseif t:find("khana") or t:find("food") or t:find("bhuk") or t:find("chai") or t:find("nashta") then
-    emoji = " 馃嵈馃構馃嵅"
+    emoji = " 🍽️☕🍲"
   elseif t:find("nind") or t:find("sleep") or t:find("night") or t:find("so gaya") then
-    emoji = " 馃槾馃挙馃寵"
+    emoji = " 😴💤🌙"
   elseif t:find("ok") or t:find("theek") or t:find("done") or t:find("ji") then
-    emoji = " 鉁咅焼楌煈�"
+    emoji = " ✅👍"
   elseif t:find("allah") or t:find("dua") or t:find("ameen") or t:find("mashallah") then
-    emoji = " 馃げ馃晫馃槆"
+    emoji = " 🤲🕌😇"
   else
-    emoji = " 鉁�" -- Default Emoji
+    emoji = " ✨"
   end
   
   return text .. emoji
@@ -78,7 +89,6 @@ end
 -- 5. VOICE RECOGNITION ENGINE (Optimized Speed)
 function startVoiceTyping(targetBox)
   pcall(function()
-    -- Vibration
     if service.getSharedData("vibrate_on") == "true" then
       local vib = service.getContext().getSystemService(Context.VIBRATOR_SERVICE)
       if vib then vib.vibrate(60) end
@@ -93,7 +103,6 @@ function startVoiceTyping(targetBox)
         if resultsArray and resultsArray.size() > 0 then
           local spokenText = tostring(resultsArray.get(0))
           local finalText = applySmartEmoji(spokenText)
-          -- Fast Typing Insertion
           service.insertText(targetBox, finalText .. " ")
           service.speak(spokenText)
         end
@@ -148,6 +157,9 @@ function showSettingsMenu()
       lb.setTitle("Select Language")
       lb.setItems(languages, function(d, i)
         selectedLangCode, selectedLangName = codes[i+1], languages[i+1]
+        -- Save permanently so it survives restart / service off-on
+        service.setSharedData("selectedLangCode", selectedLangCode)
+        service.setSharedData("selectedLangName", selectedLangName)
         service.speak("Set to " .. selectedLangName)
         showSettingsMenu()
       end)
