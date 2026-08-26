@@ -1,5 +1,5 @@
 -- Extension Name: Jieshuo_Text_To_File_Converter | Creator: Mohammad Usman
--- Version: 4.5 (Final Optimized & Cleaned Version)
+-- Version: 7.0 (Ultimate Share, Permanent Favorites, Search, Rename, Undo, Overwrite - FULLY FIXED)
 -- Compatibility: Android 8.0 to Android 14+ (Jieshuo Screens)
 
 require "import"
@@ -22,7 +22,13 @@ if not dir.exists() then
   dir.mkdirs()
 end
 
+-- Favorites Database File Path (Permanent text content storage for safety)
+local favDbPath = folderPath .. ".favorites_database.txt"
+
 local whatsappNumber = "+923261421100"
+
+-- In-memory holder for Undo Delete feature
+local lastDeleted = nil -- { name = "...", content = "..." }
 
 -- Function: TTS Voice Feedback aur Toast dono ek sath chalane ke liye
 local function speakAndToast(msg)
@@ -43,34 +49,210 @@ local function copyToClipboard(text, successMsg)
   speakAndToast(successMsg or "Text successfully copy ho gaya hai")
 end
 
--- Table to reference views safely without index crashes
-local views = {}
+-- Function: Clipboard se text paste karne ke liye
+-- FIXED: Ab koi extra character (newline waghera) khud se ADD nahi hota.
+-- Jo bhi clipboard mein hai woh currentText ke bilkul peeche exact tareeqe se
+-- jud jata hai -- taake bade code/text ko parts mein paste karne par
+-- ek bhi character idhar-udhar na ho aur file 100% durust bane.
+local function pasteFromClipboard(editText)
+  import "android.content.ClipboardManager"
+  local clipboard = service.getSystemService(Context.CLIPBOARD_SERVICE)
+  if clipboard.hasPrimaryClip() then
+    local item = clipboard.getPrimaryClip().getItemAt(0)
+    local text = item.coerceToText(service)
+    if text then
+      local currentText = tostring(editText.getText())
+      -- Exact concatenation -- koi extra "\n" ya space add nahi hota
+      editText.setText(currentText .. tostring(text))
+      speakAndToast("Text successfully paste aur append ho gaya hai")
+      return
+    end
+  end
+  speakAndToast("Clipboard mein koi text nahi hai!")
+end
 
--- Function: File list menu dikhane ke liye
-local function openFileListMenu()
-  local listDlg = LuaDialog()
-  listDlg.setTitle("Files List")
-  
-  local fileList = {}
-  local files = dir.listFiles()
-  
-  if files then
-    for i = 0, #files - 1 do
-      if files[i].isFile() and files[i].getName():find("%.txt$") then
-        table.insert(fileList, files[i].getName())
+-- Universal safe file-reading function (har Android version 8 se 14+ ke liye)
+local function readAllFromStream(fin)
+  local chunks = {}
+  local b = fin.read()
+  while b ~= -1 do
+    table.insert(chunks, string.char(b))
+    b = fin.read()
+  end
+  fin.close()
+  return table.concat(chunks)
+end
+
+local function readFileContentSafe(file)
+  if not file.exists() then
+    return nil
+  end
+  local ok, result = pcall(function()
+    local fin = FileInputStream(file)
+    return readAllFromStream(fin)
+  end)
+  if ok then
+    return result
+  else
+    return nil
+  end
+end
+
+-- Function: Direct File Sharing via Android Intent
+-- FIXED: FileProvider is app mein available nahi hai (crash de raha tha),
+-- isliye ab seedha Uri.fromFile use hota hai aur SAB kuch pcall ke andar hai
+-- taake import fail hone par bhi extension crash na ho, sirf message aaye.
+local function shareFile(filePath, fileName)
+  local file = File(filePath)
+  if not file.exists() then
+    speakAndToast("Share karne ke liye file maujood nahi hai!")
+    return
+  end
+
+  local ok = pcall(function()
+    local uri = Uri.fromFile(file)
+
+    local intent = Intent(Intent.ACTION_SEND)
+    intent.setType("text/plain")
+    intent.putExtra(Intent.EXTRA_STREAM, uri)
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    local chooser = Intent.createChooser(intent, "Share File: " .. fileName)
+    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    service.startActivity(chooser)
+  end)
+
+  if ok then
+    speakAndToast("Share menu open ho raha hai")
+  else
+    speakAndToast("Share karte waqt masla aaya, dobara koshish karein")
+  end
+end
+
+-- Advanced Favorites Management (Saving Name + Content securely)
+local function getFavoritesMap()
+  local favs = {}
+  local fFile = File(favDbPath)
+  if fFile.exists() then
+    local content = readFileContentSafe(fFile)
+    if content then
+      for name, text in content:gmatch("===([^\n]+)===\n(.-)\n===END===\n") do
+        favs[name] = text
       end
     end
   end
-  
-  if #fileList == 0 then
+  return favs
+end
+
+-- FIXED: "+" ko ".." se replace kiya hai (yehi favorite save na hone ka asal bug tha)
+local function saveFavoritesMap(favs)
+  local content = ""
+  for name, text in pairs(favs) do
+    content = content .. "===" .. name .. "===\n" .. text .. "\n===END===\n"
+  end
+  local fout = FileOutputStream(File(favDbPath))
+  fout.write(String(content).getBytes())
+  fout.close()
+end
+
+local function isFavorite(fileName)
+  local favs = getFavoritesMap()
+  return favs[fileName] ~= nil
+end
+
+-- Agar file pehle se favorite hai to sirf inform karega, dobara add/remove nahi karega
+local function addToFavoriteWithCheck(fileName, fileContent)
+  local favs = getFavoritesMap()
+  if favs[fileName] then
+    speakAndToast("Yeh file pehle se favorite list mein maujood hai")
+    return
+  end
+  favs[fileName] = fileContent or ""
+  saveFavoritesMap(favs)
+  speakAndToast("Favorites mein add kar diya gaya hai")
+end
+
+-- Sirf Favorites list ke andar se remove karne ke liye
+local function removeFromFavorites(fileName)
+  local favs = getFavoritesMap()
+  favs[fileName] = nil
+  saveFavoritesMap(favs)
+end
+
+-- Rename hone par favorites database mein bhi naam update karna (agar favorite tha)
+local function renameInFavorites(oldName, newName)
+  local favs = getFavoritesMap()
+  if favs[oldName] then
+    local content = favs[oldName]
+    favs[oldName] = nil
+    favs[newName] = content
+    saveFavoritesMap(favs)
+  end
+end
+
+-- Purani temp_ files ko start hote hi clean karna
+local function cleanupOldTempFiles()
+  local files = dir.listFiles()
+  if files then
+    for i = 0, #files - 1 do
+      if files[i].isFile() then
+        local fName = files[i].getName()
+        if fName:sub(1, 5) == "temp_" then
+          files[i].delete()
+        end
+      end
+    end
+  end
+end
+cleanupOldTempFiles()
+
+-- Table to reference views safely
+local views = {}
+
+local openFileListMenu
+local openFavoritesMenu
+
+-- Function: File list menu dikhane ke liye (with Search, Rename, Undo Delete)
+openFileListMenu = function()
+  local listDlg = LuaDialog()
+  listDlg.setTitle("Files List")
+
+  local function loadFileNames()
+    local names = {}
+    local files = dir.listFiles()
+    if files then
+      for i = 0, #files - 1 do
+        if files[i].isFile() then
+          local fName = files[i].getName()
+          if fName ~= ".favorites_database.txt" and fName:sub(1, 5) ~= "temp_" then
+            table.insert(names, fName)
+          end
+        end
+      end
+    end
+    return names
+  end
+
+  local allFiles = loadFileNames()
+
+  if #allFiles == 0 then
     speakAndToast("Filhal koi file maujood nahi hai")
     return
   end
-  
+
   local listLayout = {
     LinearLayout,
     orientation = "vertical",
     padding = "20dp",
+    {
+      EditText,
+      id = "searchBox",
+      hint = "File naam se search karein...",
+      layout_width = "fill",
+      layout_marginBottom = "10dp",
+    },
     {
       ListView,
       id = "fileListView",
@@ -92,9 +274,47 @@ local function openFileListMenu()
       },
       {
         Button,
+        text = "Favorite",
+        layout_weight = 1,
+        id = "favBtn",
+      },
+      {
+        Button,
+        text = "Share",
+        layout_weight = 1,
+        id = "shareBtn",
+      },
+    },
+    {
+      LinearLayout,
+      orientation = "horizontal",
+      layout_width = "fill",
+      gravity = "center",
+      layout_marginTop = "8dp",
+      {
+        Button,
+        text = "Rename",
+        layout_weight = 1,
+        id = "renameBtn",
+      },
+      {
+        Button,
         text = "Delete",
         layout_weight = 1,
         id = "deleteBtn",
+      },
+    },
+    {
+      LinearLayout,
+      orientation = "horizontal",
+      layout_width = "fill",
+      gravity = "center",
+      layout_marginTop = "8dp",
+      {
+        Button,
+        text = "Undo Last Delete",
+        layout_weight = 1,
+        id = "undoBtn",
       },
       {
         Button,
@@ -104,54 +324,187 @@ local function openFileListMenu()
       },
     }
   }
-  
+
   local listViews = {}
   listDlg.setView(loadlayout(listLayout, listViews))
-  
-  local adapter = ArrayAdapter(service, android.R.layout.simple_list_item_single_choice, fileList)
+
+  local currentList = {}
+  for _, v in ipairs(allFiles) do table.insert(currentList, v) end
+
+  local adapter = ArrayAdapter(service, android.R.layout.simple_list_item_single_choice, currentList)
   listViews.fileListView.Adapter = adapter
-  
+
   local selectedPosition = -1
   listViews.fileListView.onItemClick = function(parent, view, position, id)
     selectedPosition = position
   end
-  
-  -- View Text Click Logic (Main menu ke boxes mein text load karega aur list close hogi)
+
+  -- Live Search Filter Logic
+  listViews.searchBox.addTextChangedListener({
+    onTextChanged = function(s, start, before, count)
+      local query = tostring(s):lower()
+      currentList = {}
+      for _, fName in ipairs(allFiles) do
+        if query == "" or fName:lower():find(query, 1, true) then
+          table.insert(currentList, fName)
+        end
+      end
+      selectedPosition = -1
+      local newAdapter = ArrayAdapter(service, android.R.layout.simple_list_item_single_choice, currentList)
+      listViews.fileListView.Adapter = newAdapter
+    end
+  })
+
+  -- View Text Click Logic
   listViews.viewBtn.onClick = function()
-    if selectedPosition == -1 then
+    if selectedPosition == -1 or not currentList[selectedPosition + 1] then
       speakAndToast("Pehle list se koi file check karein")
       return
     end
-    
-    local fileName = fileList[selectedPosition + 1]
+
+    local fileName = currentList[selectedPosition + 1]
     local targetFile = File(folderPath .. fileName)
-    
-    local fileIn = FileInputStream(targetFile)
-    local bytes = fileIn.readAllBytes()
-    fileIn.close()
-    local fileContent = String(bytes).toString()
-    
-    local cleanName = fileName:gsub("%.txt$", "")
+
+    local fileContent = readFileContentSafe(targetFile)
+    if fileContent == nil then
+      speakAndToast("File padhne mein masla aaya")
+      return
+    end
+
+    local cleanName = fileName:match("(.+)%..+$") or fileName
+    local ext = fileName:match("%.([^%.]+)$") or "txt"
+
     views.edtFileName.Text = cleanName
     views.edtTextContent.Text = fileContent
-    
+
+    local items = {"txt", "lua", "html", "json", "js", "py", "css"}
+    for idx, e in ipairs(items) do
+      if e == ext then
+        views.spinnerExtension.setSelection(idx - 1)
+        break
+      end
+    end
+
     speakAndToast("File ka text main menu mein load ho gaya hai")
     listDlg.dismiss()
   end
-  
-  -- Delete Button Click Logic with Confirmation Dialog Box
+
+  -- Favorite Button Logic in List
+  listViews.favBtn.onClick = function()
+    if selectedPosition == -1 or not currentList[selectedPosition + 1] then
+      speakAndToast("Pehle koi file select karein")
+      return
+    end
+    local fileName = currentList[selectedPosition + 1]
+    local targetFile = File(folderPath .. fileName)
+    local fileContent = readFileContentSafe(targetFile) or ""
+    addToFavoriteWithCheck(fileName, fileContent)
+  end
+
+  -- Share Button Logic in List
+  listViews.shareBtn.onClick = function()
+    if selectedPosition == -1 or not currentList[selectedPosition + 1] then
+      speakAndToast("Pehle share karne ke liye file select karein")
+      return
+    end
+    local fileName = currentList[selectedPosition + 1]
+    shareFile(folderPath .. fileName, fileName)
+  end
+
+  -- Rename Button Logic
+  listViews.renameBtn.onClick = function()
+    if selectedPosition == -1 or not currentList[selectedPosition + 1] then
+      speakAndToast("Pehle rename karne ke liye file select karein")
+      return
+    end
+    local oldFileName = currentList[selectedPosition + 1]
+    local ext = oldFileName:match("%.([^%.]+)$") or "txt"
+    local oldCleanName = oldFileName:match("(.+)%..+$") or oldFileName
+
+    local renameDlg = LuaDialog()
+    renameDlg.setTitle("Rename File")
+
+    local renameLayout = {
+      LinearLayout,
+      orientation = "vertical",
+      padding = "20dp",
+      {
+        EditText,
+        id = "newNameInput",
+        text = oldCleanName,
+        layout_width = "fill",
+        layout_marginBottom = "15dp",
+      },
+      {
+        LinearLayout,
+        orientation = "horizontal",
+        layout_width = "fill",
+        gravity = "center",
+        {
+          Button,
+          text = "Confirm Rename",
+          layout_weight = 1,
+          id = "btnConfirmRename",
+        },
+        {
+          Button,
+          text = "Cancel",
+          layout_weight = 1,
+          id = "btnCancelRename",
+        },
+      }
+    }
+
+    local renameViews = {}
+    renameDlg.setView(loadlayout(renameLayout, renameViews))
+
+    renameViews.btnConfirmRename.onClick = function()
+      local newCleanName = tostring(renameViews.newNameInput.Text):gsub("^%s+", ""):gsub("%s+$", "")
+      if newCleanName == "" then
+        speakAndToast("Naya naam khali nahi ho sakta!")
+        return
+      end
+
+      local newFileName = newCleanName .. "." .. ext
+      local newFile = File(folderPath .. newFileName)
+
+      if newFile.exists() then
+        speakAndToast("Is naam se pehle se ek file maujood hai!")
+        return
+      end
+
+      local oldFile = File(folderPath .. oldFileName)
+      if oldFile.renameTo(newFile) then
+        renameInFavorites(oldFileName, newFileName)
+        speakAndToast("File successfully rename ho gayi hai")
+        renameDlg.dismiss()
+        listDlg.dismiss()
+        openFileListMenu()
+      else
+        speakAndToast("Rename nahi ho saka, dobara koshish karein")
+      end
+    end
+
+    renameViews.btnCancelRename.onClick = function()
+      renameDlg.dismiss()
+    end
+
+    renameDlg.show()
+  end
+
+  -- Delete Button Click Logic with Confirmation Dialog Box + Undo support
   listViews.deleteBtn.onClick = function()
-    if selectedPosition == -1 then
+    if selectedPosition == -1 or not currentList[selectedPosition + 1] then
       speakAndToast("Pehle delete karne ke liye file check karein")
       return
     end
-    
-    local fileName = fileList[selectedPosition + 1]
+
+    local fileName = currentList[selectedPosition + 1]
     local targetFile = File(folderPath .. fileName)
-    
+
     local confirmDlg = LuaDialog()
     confirmDlg.setTitle("Delete Confirm?")
-    
+
     local confirmLayout = {
       LinearLayout,
       orientation = "vertical",
@@ -181,42 +534,271 @@ local function openFileListMenu()
         },
       }
     }
-    
+
     local confirmViews = {}
     confirmDlg.setView(loadlayout(confirmLayout, confirmViews))
-    
+
     confirmViews.btnRealDelete.onClick = function()
+      local contentBeforeDelete = readFileContentSafe(targetFile) or ""
       if targetFile.delete() then
+        lastDeleted = { name = fileName, content = contentBeforeDelete }
         speakAndToast("File successfully delete kar di gai hai")
         confirmDlg.dismiss()
         listDlg.dismiss()
-        openFileListMenu() -- List ko auto refresh karne ke liye
+        openFileListMenu()
       else
         speakAndToast("File delete nahi ho saki")
         confirmDlg.dismiss()
       end
     end
-    
+
     confirmViews.btnCancelDelete.onClick = function()
       speakAndToast("Delete cancel kar diya gaya")
       confirmDlg.dismiss()
     end
-    
+
     confirmDlg.show()
   end
-  
+
+  -- Undo Last Delete Logic
+  listViews.undoBtn.onClick = function()
+    if lastDeleted == nil then
+      speakAndToast("Undo karne ke liye koi delete hui file nahi hai")
+      return
+    end
+
+    local restoredFile = File(folderPath .. lastDeleted.name)
+    if restoredFile.exists() then
+      speakAndToast("Is naam se ab pehle se file maujood hai, undo nahi ho saka")
+      return
+    end
+
+    local ok = pcall(function()
+      local fout = FileOutputStream(restoredFile)
+      fout.write(String(lastDeleted.content).getBytes())
+      fout.close()
+    end)
+
+    if ok then
+      speakAndToast("Last delete hui file wapas restore ho gayi hai")
+      lastDeleted = nil
+      listDlg.dismiss()
+      openFileListMenu()
+    else
+      speakAndToast("Undo karte waqt masla aaya")
+    end
+  end
+
   listViews.backBtn.onClick = function()
     listDlg.dismiss()
   end
-  
+
   listDlg.show()
+end
+
+-- Function: Favorites Menu Open Karne Ke Liye
+openFavoritesMenu = function()
+  local favMap = getFavoritesMap()
+  local favList = {}
+  for fName, _ in pairs(favMap) do
+    table.insert(favList, fName)
+  end
+
+  if #favList == 0 then
+    speakAndToast("Filhal koi favorite file maujood nahi hai")
+    return
+  end
+
+  local favDlg = LuaDialog()
+  favDlg.setTitle("Favorites List")
+
+  local favLayout = {
+    LinearLayout,
+    orientation = "vertical",
+    padding = "20dp",
+    {
+      ListView,
+      id = "favListView",
+      layout_width = "fill",
+      layout_height = "0dp",
+      layout_weight = 1,
+      choiceMode = ListView.CHOICE_MODE_SINGLE,
+    },
+    {
+      LinearLayout,
+      orientation = "horizontal",
+      layout_width = "fill",
+      gravity = "center",
+      {
+        Button,
+        text = "View Text",
+        layout_weight = 1,
+        id = "favViewBtn",
+      },
+      {
+        Button,
+        text = "Share",
+        layout_weight = 1,
+        id = "favShareBtn",
+      },
+      {
+        Button,
+        text = "Remove Fav",
+        layout_weight = 1,
+        id = "favRemoveBtn",
+      },
+    },
+    {
+      LinearLayout,
+      orientation = "horizontal",
+      layout_width = "fill",
+      gravity = "center",
+      layout_marginTop = "8dp",
+      {
+        Button,
+        text = "Go Back",
+        layout_weight = 1,
+        id = "favBackBtn",
+      },
+    }
+  }
+
+  local favViews = {}
+  favDlg.setView(loadlayout(favLayout, favViews))
+
+  local adapter = ArrayAdapter(service, android.R.layout.simple_list_item_single_choice, favList)
+  favViews.favListView.Adapter = adapter
+
+  local selectedFavPos = -1
+  favViews.favListView.onItemClick = function(parent, view, position, id)
+    selectedFavPos = position
+  end
+
+  -- View Text from Favorites Database
+  favViews.favViewBtn.onClick = function()
+    if selectedFavPos == -1 then
+      speakAndToast("Pehle favorite list se koi file select karein")
+      return
+    end
+
+    local fileName = favList[selectedFavPos + 1]
+    local fileContent = favMap[fileName] or ""
+
+    local cleanName = fileName:match("(.+)%..+$") or fileName
+    local ext = fileName:match("%.([^%.]+)$") or "txt"
+
+    views.edtFileName.Text = cleanName
+    views.edtTextContent.Text = fileContent
+
+    local items = {"txt", "lua", "html", "json", "js", "py", "css"}
+    for idx, e in ipairs(items) do
+      if e == ext then
+        views.spinnerExtension.setSelection(idx - 1)
+        break
+      end
+    end
+
+    speakAndToast("Favorite file ka text main menu mein load ho gaya hai")
+    favDlg.dismiss()
+  end
+
+  -- Share Favorite Content Directly
+  favViews.favShareBtn.onClick = function()
+    if selectedFavPos == -1 then
+      speakAndToast("Pehle share karne ke liye file select karein")
+      return
+    end
+    local fileName = favList[selectedFavPos + 1]
+    local fileContent = favMap[fileName] or ""
+
+    local tempFile = File(folderPath .. "temp_" .. fileName)
+    local ok = pcall(function()
+      local fout = FileOutputStream(tempFile)
+      fout.write(String(fileContent).getBytes())
+      fout.close()
+    end)
+
+    if ok then
+      tempFile.deleteOnExit()
+      shareFile(folderPath .. "temp_" .. fileName, fileName)
+    else
+      speakAndToast("Temp file banane mein masla aaya")
+    end
+  end
+
+  -- Remove from Favorites - File List jaisa hi Confirmation Dialog
+  favViews.favRemoveBtn.onClick = function()
+    if selectedFavPos == -1 then
+      speakAndToast("Pehle koi file select karein")
+      return
+    end
+
+    local fileName = favList[selectedFavPos + 1]
+
+    local confirmDlg = LuaDialog()
+    confirmDlg.setTitle("Delete Confirm?")
+
+    local confirmLayout = {
+      LinearLayout,
+      orientation = "vertical",
+      padding = "20dp",
+      {
+        TextView,
+        text = "Kya aap waqai '" .. fileName .. "' ko favorites se delete karna chahte hain?",
+        textSize = "16sp",
+        layout_marginBottom = "20dp",
+      },
+      {
+        LinearLayout,
+        orientation = "horizontal",
+        layout_width = "fill",
+        gravity = "center",
+        {
+          Button,
+          text = "Confirm Delete",
+          layout_weight = 1,
+          id = "btnRealDelete",
+        },
+        {
+          Button,
+          text = "Cancel",
+          layout_weight = 1,
+          id = "btnCancelDelete",
+        },
+      }
+    }
+
+    local confirmViews = {}
+    confirmDlg.setView(loadlayout(confirmLayout, confirmViews))
+
+    confirmViews.btnRealDelete.onClick = function()
+      removeFromFavorites(fileName)
+      speakAndToast("File favorites se successfully delete kar di gai hai")
+      confirmDlg.dismiss()
+      favDlg.dismiss()
+      openFavoritesMenu()
+    end
+
+    confirmViews.btnCancelDelete.onClick = function()
+      speakAndToast("Delete cancel kar diya gaya")
+      confirmDlg.dismiss()
+    end
+
+    confirmDlg.show()
+  end
+
+  favViews.favBackBtn.onClick = function()
+    favDlg.dismiss()
+  end
+
+  favDlg.show()
 end
 
 -- Function: About and Support Menu Open Karne Ke Liye
 local function openAboutSupportMenu()
   local aboutDlg = LuaDialog()
   aboutDlg.setTitle("About and Support")
-  
+
   local aboutLayout = {
     LinearLayout,
     orientation = "vertical",
@@ -259,31 +841,31 @@ local function openAboutSupportMenu()
       textSize = "16sp",
     },
   }
-  
+
   local aboutViews = {}
   aboutDlg.setView(loadlayout(aboutLayout, aboutViews))
-  
+
   aboutViews.btnCopyNumber.onClick = function()
     copyToClipboard(whatsappNumber, "WhatsApp number successfully copy ho gaya hai")
   end
-  
+
   aboutViews.btnContactWhatsapp.onClick = function()
     local url = "https://api.whatsapp.com/send?phone=" .. whatsappNumber:gsub("%+", "")
     local intent = Intent(Intent.ACTION_VIEW)
     intent.setData(Uri.parse(url))
     intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    
+
     aboutDlg.dismiss()
     dlg.dismiss()
-    
+
     service.startActivity(intent)
     speakAndToast("Extension closed, WhatsApp open ho raha hai")
   end
-  
+
   aboutViews.btnAboutBack.onClick = function()
     aboutDlg.dismiss()
   end
-  
+
   aboutDlg.show()
 end
 
@@ -310,24 +892,55 @@ local scrollContainer = {
       id = "edtFileName",
       hint = "Jahan file ka name add karein",
       layout_width = "fill",
-      layout_marginBottom = "15dp",
+      layout_marginBottom = "10dp",
     },
     {
       EditText,
       id = "edtTextContent",
       hint = "Jahan text add karein",
       layout_width = "fill",
-      layout_height = "160dp",
+      layout_height = "150dp",
       gravity = "top",
+      layout_marginBottom = "5dp",
+    },
+    {
+      TextView,
+      id = "txtCounter",
+      text = "Characters: 0 | Words: 0",
+      textSize = "13sp",
       layout_marginBottom = "15dp",
     },
     {
-      Button,
-      id = "btnCopyText",
-      text = "Copy Text",
+      LinearLayout,
+      orientation = "horizontal",
       layout_width = "fill",
       layout_marginBottom = "10dp",
-      textSize = "16sp",
+      {
+        Button,
+        id = "btnCopyText",
+        text = "Copy",
+        layout_weight = 1,
+        textSize = "15sp",
+      },
+      {
+        Button,
+        id = "btnPasteText",
+        text = "Paste",
+        layout_weight = 1,
+        textSize = "15sp",
+      },
+    },
+    {
+      TextView,
+      text = "Select File Format (Category):",
+      textSize = "13sp",
+      layout_marginBottom = "5dp",
+    },
+    {
+      Spinner,
+      id = "spinnerExtension",
+      layout_width = "fill",
+      layout_marginBottom = "10dp",
     },
     {
       Button,
@@ -341,6 +954,14 @@ local scrollContainer = {
       Button,
       id = "btnShowList",
       text = "List",
+      layout_width = "fill",
+      layout_marginBottom = "10dp",
+      textSize = "16sp",
+    },
+    {
+      Button,
+      id = "btnFavorites",
+      text = "Favorites",
       layout_width = "fill",
       layout_marginBottom = "10dp",
       textSize = "16sp",
@@ -365,9 +986,28 @@ local scrollContainer = {
 
 dlg.setView(loadlayout(scrollContainer, views))
 
+-- Setup Spinner Adapter for File Extensions/Categories (.txt, .lua, .html, .json, .js, .py, .css)
+local extensionsList = {"txt", "lua", "html", "json", "js", "py", "css"}
+local adapter = ArrayAdapter(service, android.R.layout.simple_spinner_item, extensionsList)
+adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+views.spinnerExtension.setAdapter(adapter)
+
 -- Accessibility First Focus Rule
 views.txtHeaderTitle.requestFocus()
 views.txtHeaderTitle.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED)
+
+-- Live Character & Word Counter Logic
+views.edtTextContent.addTextChangedListener({
+  onTextChanged = function(s, start, before, count)
+    local textStr = tostring(s)
+    local charCount = utf8 and utf8.len(textStr) or #textStr
+    local wordCount = 0
+    for w in textStr:gmatch("%S+") do
+      wordCount = wordCount + 1
+    end
+    views.txtCounter.Text = "Characters: " .. charCount .. " | Words: " .. wordCount
+  end
+})
 
 -- Copy Button Trigger
 views.btnCopyText.onClick = function()
@@ -375,45 +1015,110 @@ views.btnCopyText.onClick = function()
   copyToClipboard(currentText, "Text successfully copy ho gaya hai")
 end
 
--- Create File Button Click Logic (With Duplicate Checking)
+-- Paste Button Trigger (Exact Append - no extra characters added)
+views.btnPasteText.onClick = function()
+  pasteFromClipboard(views.edtTextContent)
+end
+
+-- Create File Button Click Logic (With Overwrite Confirmation & Spinner Extension)
 views.btnCreateFile.onClick = function()
   local fName = tostring(views.edtFileName.Text):gsub("^%s+", ""):gsub("%s+$", "")
   local fContent = tostring(views.edtTextContent.Text)
-  
+
   if fName == "" then
     speakAndToast("Pehle file ka name add karein!")
     return
   end
-  
+
   if fContent == "" then
     speakAndToast("Pehle text add karein!")
     return
   end
-  
-  if not fName:find("%.txt$") then
-    fName = fName .. ".txt"
+
+  local selectedExt = extensionsList[views.spinnerExtension.getSelectedItemPosition() + 1] or "txt"
+
+  if not fName:find("%.%w+$") then
+    fName = fName .. "." .. selectedExt
   end
-  
+
   local newFile = File(folderPath .. fName)
-  
-  -- Strict Check: File pehle se hai ya nahi
-  if newFile.exists() then
-    speakAndToast("Is name se file pehle se maujood hai, aap naya name likhein!")
-    return
+
+  local function writeFile()
+    local ok = pcall(function()
+      local fileOut = FileOutputStream(newFile)
+      fileOut.write(String(fContent).getBytes())
+      fileOut.close()
+    end)
+
+    if ok then
+      speakAndToast("File successfully create ho gayi hai")
+      views.edtFileName.Text = ""
+      views.edtTextContent.Text = ""
+    else
+      speakAndToast("File create karte waqt masla aaya")
+    end
   end
-  
-  local fileOut = FileOutputStream(newFile)
-  fileOut.write(String(fContent).getBytes())
-  fileOut.close()
-  
-  speakAndToast("File successfully create ho gayi hai")
-  
-  views.edtFileName.Text = ""
-  views.edtTextContent.Text = ""
+
+  if newFile.exists() then
+    -- Overwrite Confirmation Dialog
+    local overwriteDlg = LuaDialog()
+    overwriteDlg.setTitle("File Pehle Se Maujood Hai")
+
+    local overwriteLayout = {
+      LinearLayout,
+      orientation = "vertical",
+      padding = "20dp",
+      {
+        TextView,
+        text = "'" .. fName .. "' naam se file pehle se maujood hai. Kya aap ise overwrite (replace) karna chahte hain?",
+        textSize = "16sp",
+        layout_marginBottom = "20dp",
+      },
+      {
+        LinearLayout,
+        orientation = "horizontal",
+        layout_width = "fill",
+        gravity = "center",
+        {
+          Button,
+          text = "Overwrite",
+          layout_weight = 1,
+          id = "btnOverwrite",
+        },
+        {
+          Button,
+          text = "Cancel",
+          layout_weight = 1,
+          id = "btnCancelOverwrite",
+        },
+      }
+    }
+
+    local overwriteViews = {}
+    overwriteDlg.setView(loadlayout(overwriteLayout, overwriteViews))
+
+    overwriteViews.btnOverwrite.onClick = function()
+      overwriteDlg.dismiss()
+      writeFile()
+    end
+
+    overwriteViews.btnCancelOverwrite.onClick = function()
+      speakAndToast("File create cancel kar di gayi")
+      overwriteDlg.dismiss()
+    end
+
+    overwriteDlg.show()
+  else
+    writeFile()
+  end
 end
 
 views.btnShowList.onClick = function()
   openFileListMenu()
+end
+
+views.btnFavorites.onClick = function()
+  openFavoritesMenu()
 end
 
 views.btnAboutSupport.onClick = function()
